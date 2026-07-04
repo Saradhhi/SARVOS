@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SARVOS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --graphite-950: #14171c;
+    --graphite-850: #1c2028;
+    --graphite-750: #262b35;
+    --graphite-650: #333a46;
+    --amber-500: #d9a648;
+    --amber-300: #e8c483;
+    --parchment-100: #ece8de;
+    --slate-400: #8a909c;
+    --slate-500: #6b7280;
+    --risk-500: #d9614f;
+    --risk-300: #e69187;
+    --sensitive-500: #d9a648;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-body: 'Inter', sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--graphite-950);
+    color: var(--parchment-100);
+    font-family: var(--font-body);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    height: 100vh;
+  }
+
+  /* ---- Header ---- */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--graphite-750);
+    background: var(--graphite-850);
+  }
+
+  .wordmark {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    color: var(--parchment-100);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--amber-500);
+    box-shadow: 0 0 0 0 rgba(217, 166, 72, 0.6);
+    animation: pulse 2.4s infinite;
+  }
+
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(217, 166, 72, 0.55); }
+    70%  { box-shadow: 0 0 0 6px rgba(217, 166, 72, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(217, 166, 72, 0); }
+  }
+
+  .tagline {
+    font-size: 12px;
+    color: var(--slate-400);
+    letter-spacing: 0.03em;
+    margin-left: 2px;
+  }
+
+  /* ---- Body layout ---- */
+  .body {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 0;
+  }
+
+  @media (max-width: 760px) {
+    .body { grid-template-columns: 1fr; }
+    .rail { display: none; }
+  }
+
+  /* ---- Chat column ---- */
+  .chat-col {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--graphite-750);
+  }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .msg {
+    max-width: 72%;
+    padding: 11px 14px;
+    border-radius: 10px;
+    font-size: 14.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    background: var(--graphite-650);
+    color: var(--parchment-100);
+    border-bottom-right-radius: 3px;
+  }
+
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--graphite-850);
+    border: 1px solid var(--graphite-750);
+    border-bottom-left-radius: 3px;
+  }
+
+  .msg .agent-tag {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--amber-500);
+    text-transform: uppercase;
+    margin-bottom: 5px;
+  }
+
+  .msg.system-note {
+    align-self: center;
+    background: transparent;
+    color: var(--slate-500);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    padding: 2px 0;
+  }
+
+  /* ---- Confirmation banner ---- */
+  .confirm-banner {
+    margin: 0 20px 14px 20px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--risk-500);
+    background: rgba(217, 97, 79, 0.08);
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .confirm-banner.visible { display: flex; }
+
+  .confirm-banner .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--risk-300);
+    text-transform: uppercase;
+  }
+
+  .confirm-banner .prompt-text {
+    font-size: 14px;
+    color: var(--parchment-100);
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .confirm-actions button {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--graphite-650);
+    background: var(--graphite-850);
+    color: var(--parchment-100);
+    cursor: pointer;
+  }
+
+  .confirm-actions button.approve {
+    background: var(--risk-500);
+    border-color: var(--risk-500);
+    color: var(--graphite-950);
+    font-weight: 600;
+  }
+
+  .confirm-actions button:hover { filter: brightness(1.1); }
+
+  /* ---- Input bar ---- */
+  .input-bar {
+    display: flex;
+    gap: 10px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--graphite-750);
+    background: var(--graphite-850);
+  }
+
+  .input-bar input {
+    flex: 1;
+    background: var(--graphite-950);
+    border: 1px solid var(--graphite-650);
+    color: var(--parchment-100);
+    border-radius: 8px;
+    padding: 11px 14px;
+    font-family: var(--font-body);
+    font-size: 14px;
+    outline: none;
+  }
+
+  .input-bar input:focus { border-color: var(--amber-500); }
+
+  .input-bar button {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    padding: 0 20px;
+    border-radius: 8px;
+    border: none;
+    background: var(--amber-500);
+    color: var(--graphite-950);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .input-bar button:hover { background: var(--amber-300); }
+  .input-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ---- System rail (signature element) ---- */
+  .rail {
+    display: flex;
+    flex-direction: column;
+    background: var(--graphite-850);
+    min-height: 0;
+  }
+
+  .rail-header {
+    padding: 12px 16px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    color: var(--slate-400);
+    border-bottom: 1px solid var(--graphite-750);
+    text-transform: uppercase;
+  }
+
+  .rail-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.7;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .rail-entry {
+    color: var(--slate-400);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .rail-entry .time { color: var(--slate-500); }
+  .rail-entry .action { color: var(--parchment-100); }
+  .rail-entry .risk-safe { color: var(--slate-400); }
+  .rail-entry .risk-sensitive { color: var(--sensitive-500); }
+  .rail-entry .risk-destructive { color: var(--risk-500); font-weight: 600; }
+
+  .cursor-line {
+    padding: 10px 16px 14px 16px;
+    font-family: var(--font-mono);
+    color: var(--amber-500);
+    font-size: 13px;
+  }
+
+  .cursor-blink {
+    animation: blink 1.1s step-start infinite;
+  }
+
+  @keyframes blink {
+    50% { opacity: 0; }
+  }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--graphite-650); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <span class="wordmark">SARVOS</span>
+    <span class="status-dot" title="connected"></span>
+    <span class="tagline">personal ai operating system — phase 1a</span>
+  </div>
+
+  <div class="body">
+    <div class="chat-col">
+      <div class="messages" id="messages">
+        <div class="msg system-note">Start a conversation below. Try: "remember that I prefer dark mode", "debug this function", or "delete everything" to see the confirmation flow.</div>
+      </div>
+
+      <div class="confirm-banner" id="confirmBanner">
+        <span class="label">Confirmation required</span>
+        <span class="prompt-text" id="confirmPrompt"></span>
+        <div class="confirm-actions">
+          <button class="approve" id="confirmYes">Proceed</button>
+          <button id="confirmNo">Cancel</button>
+        </div>
+      </div>
+
+      <form class="input-bar" id="inputForm">
+        <input type="text" id="messageInput" placeholder="Ask SARVOS to do something..." autocomplete="off" />
+        <button type="submit" id="sendBtn">Send</button>
+      </form>
+    </div>
+
+    <div class="rail">
+      <div class="rail-header">System · Audit Trail</div>
+      <div class="rail-log" id="railLog"></div>
+      <div class="cursor-line"><span class="cursor-blink">▊</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const messagesEl = document.getElementById('messages');
+const railLogEl = document.getElementById('railLog');
+const form = document.getElementById('inputForm');
+const input = document.getElementById('messageInput');
+const sendBtn = document.getElementById('sendBtn');
+const confirmBanner = document.getElementById('confirmBanner');
+const confirmPrompt = document.getElementById('confirmPrompt');
+const confirmYes = document.getElementById('confirmYes');
+const confirmNo = document.getElementById('confirmNo');
+
+function addMessage(role, content, agent) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  if (agent && role === 'assistant') {
+    const tag = document.createElement('span');
+    tag.className = 'agent-tag';
+    tag.textContent = agent;
+    div.appendChild(tag);
+  }
+  const textNode = document.createTextNode(content);
+  div.appendChild(textNode);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function riskClass(risk) {
+  if (risk === 'destructive') return 'risk-destructive';
+  if (risk === 'sensitive') return 'risk-sensitive';
+  return 'risk-safe';
+}
+
+async function refreshLog() {
+  try {
+    const res = await fetch('/api/log?limit=30');
+    const data = await res.json();
+    railLogEl.innerHTML = '';
+    // entries come back newest-first; show oldest-first for a natural read
+    const entries = [...data.entries].reverse();
+    for (const e of entries) {
+      const line = document.createElement('div');
+      line.className = 'rail-entry';
+      const time = (e.timestamp || '').split(' ')[1] || e.timestamp || '';
+      const risk = e.risk ? `[${e.risk}]` : '';
+      line.innerHTML = `<span class="time">${time}</span> <span class="action">${e.action}</span> ` +
+        `<span class="${riskClass(e.risk)}">${e.agent || ''} ${risk}</span>`;
+      railLogEl.appendChild(line);
+    }
+    railLogEl.scrollTop = railLogEl.scrollHeight;
+  } catch (err) {
+    console.error('log refresh failed', err);
+  }
+}
+
+function setBusy(busy) {
+  sendBtn.disabled = busy;
+  input.disabled = busy;
+}
+
+async function sendMessage(text) {
+  addMessage('user', text);
+  setBusy(true);
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text })
+    });
+    const data = await res.json();
+    handleResponse(data);
+  } catch (err) {
+    addMessage('assistant', `Connection error: ${err}. Is the server running?`);
+  } finally {
+    setBusy(false);
+    refreshLog();
+  }
+}
+
+function handleResponse(data) {
+  if (data.status === 'needs_confirmation') {
+    confirmPrompt.textContent = data.prompt;
+    confirmBanner.classList.add('visible');
+    return;
+  }
+  confirmBanner.classList.remove('visible');
+  for (const m of (data.messages || [])) {
+    addMessage('assistant', m.output, m.agent);
+  }
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  sendMessage(text);
+});
+
+confirmYes.addEventListener('click', async () => {
+  confirmBanner.classList.remove('visible');
+  setBusy(true);
+  try {
+    const res = await fetch('/api/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: true })
+    });
+    handleResponse(await res.json());
+  } finally {
+    setBusy(false);
+    refreshLog();
+  }
+});
+
+confirmNo.addEventListener('click', async () => {
+  confirmBanner.classList.remove('visible');
+  setBusy(true);
+  try {
+    const res = await fetch('/api/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved: false })
+    });
+    handleResponse(await res.json());
+  } finally {
+    setBusy(false);
+    refreshLog();
+  }
+});
+
+refreshLog();
+setInterval(refreshLog, 5000);
+</script>
+</body>
+</html>

@@ -19,8 +19,22 @@ instead of crashing or faking a response.
 
 ```bash
 pip install -r requirements.txt
+```
+
+**Option A — CLI:**
+```bash
 python main.py
 ```
+
+**Option B — Web UI:**
+```bash
+uvicorn api.server:app --reload
+```
+Then open http://localhost:8000. Same orchestrator, memory, and agents
+underneath — the web UI is purely an HTTP layer (`api/server.py`) on top,
+nothing about the core logic changed. It adds a live audit-trail panel
+(the "System" rail) so confirmation gating and agent routing are visible
+as they happen, not just logged to a file you'd have to go dig up.
 
 Try:
 ```
@@ -34,14 +48,14 @@ log                          <- shows the audit trail
 ## Run the tests
 
 ```bash
-pip install pytest
+pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-21 tests, all passing, covering episodic memory, semantic recall, the
-confirmation-gating logic (since that's the part most likely to silently
-regress), and the LLM client's graceful-degradation path (Ollama not
-running should never crash the CLI).
+28 tests, all passing: episodic memory, semantic recall, confirmation
+gating (the part most likely to silently regress), LLM graceful degradation,
+and the web API's request/response contract including the confirmation flow
+over HTTP.
 
 ## What's actually real here (updated)
 
@@ -112,6 +126,25 @@ handling) is a substantial project on its own, and coupling your hardest
 UX problem to your foundation risks a rough first impression of the whole
 system. Recommend keeping that split.
 
+## Web UI design notes
+
+Deliberately not a generic chat-bubble template. Design tokens:
+
+- **Palette**: deep graphite background (`#14171c`), warm amber accent
+  (`#d9a648`) — chosen over the more common near-black+neon-green AI
+  aesthetic to fit "personal operating system" rather than "chatbot demo."
+  Destructive/risk states use a separate coral-red (`#d9614f`), never the
+  primary accent, so danger reads as an exception rather than the theme.
+- **Type**: IBM Plex Mono for system/audit data and the wordmark (technical,
+  "operating system" register), Inter for conversational text (readable,
+  human register). The split itself signals which parts of the UI are
+  "system" vs. "conversation."
+- **Signature element**: the right-hand System/Audit Trail rail — a live,
+  terminal-styled readout of the same audit log the orchestrator already
+  writes to SQLite. This isn't decorative: it's the spec's "every action
+  should be observable" principle made visible in real time, color-coded by
+  risk level, rather than something you'd have to go query separately.
+
 ## Project layout
 
 ```
@@ -130,12 +163,17 @@ memory/
 llm/
   config.py          Environment-driven config, free/local defaults
   client.py          LLMClient interface + OllamaClient implementation
+api/
+  server.py          FastAPI wrapper around the orchestrator (web UI backend)
+static/
+  index.html         Web UI: chat + live audit-trail rail
 tests/
   test_memory.py
   test_orchestrator.py
   test_agents.py     Memory-agent parsing regression tests
   test_llm_client.py Ollama-unavailable graceful degradation tests
-main.py              CLI entry point
+  test_api.py        FastAPI endpoint + confirmation-flow tests
+main.py              CLI entry point (still works, independent of the web UI)
 ```
 
 ## Suggested next step

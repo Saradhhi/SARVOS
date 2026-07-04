@@ -40,6 +40,7 @@ class AgentName(str, Enum):
     PLANNER = "planner"
     CODING = "coding"
     MEMORY = "memory"
+    AUTOMATION = "automation"
     GENERAL = "general"
 
 
