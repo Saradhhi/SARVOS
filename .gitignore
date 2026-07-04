@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+sarvos.db
+test.db
+.pytest_cache/
+*.egg-info/
+
+# Secrets — critical now that this repo is public. Add real keys to a local
+# .env file, never to a tracked file.
+.env
+*.env
+.env.*

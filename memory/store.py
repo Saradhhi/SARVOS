@@ -1,0 +1,215 @@
+"""
+Durable storage layer. SQLite, local-first, single file on disk.
+
+This backs Episodic Memory (conversation history) and Procedural Memory
+(reusable workflows). Semantic Memory's *index* lives in engine.py, but its
+underlying records are also persisted here — the index is rebuilt from
+these rows, so it's always reconstructible and never a source of truth.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from core.schemas import ConversationTurn, MemoryRecord
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS turns (
+    turn_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    agent TEXT,
+    timestamp TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS memory_records (
+    record_id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'note',
+    source_turn_id TEXT,
+    created_at TEXT NOT NULL,
+    tags TEXT NOT NULL DEFAULT '[]',
+    deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS workflows (
+    name TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    steps TEXT NOT NULL,  -- JSON list of step instructions
+    created_at TEXT NOT NULL,
+    last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    task_id TEXT,
+    agent TEXT,
+    risk TEXT,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+);
+"""
+
+
+class Store:
+    """Thin, explicit wrapper around SQLite. No ORM — the schema is small
+    enough that a query layer would add indirection without real benefit."""
+
+    def __init__(self, db_path: str | Path = "sarvos.db"):
+        self.db_path = str(db_path)
+        with self._connect() as conn:
+            conn.executescript(SCHEMA)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ---- Episodic memory --------------------------------------------------
+
+    def save_turn(self, turn: ConversationTurn) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO turns (turn_id, request_id, role, content, agent, "
+                "timestamp, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    turn.turn_id,
+                    turn.request_id,
+                    turn.role,
+                    turn.content,
+                    turn.agent.value if turn.agent else None,
+                    turn.timestamp.isoformat(),
+                    json.dumps(turn.metadata),
+                ),
+            )
+
+    def recent_turns(self, limit: int = 20) -> list[ConversationTurn]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM turns ORDER BY timestamp DESC LIMIT ?", (limit,)
+            ).fetchall()
+        turns = [_row_to_turn(r) for r in rows]
+        return list(reversed(turns))
+
+    # ---- Semantic memory (records) ----------------------------------------
+
+    def save_memory_record(self, record: MemoryRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO memory_records (record_id, text, kind, "
+                "source_turn_id, created_at, tags) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    record.record_id,
+                    record.text,
+                    record.kind,
+                    record.source_turn_id,
+                    record.created_at.isoformat(),
+                    json.dumps(record.tags),
+                ),
+            )
+
+    def all_memory_records(self) -> list[MemoryRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memory_records WHERE deleted = 0 "
+                "ORDER BY created_at ASC"
+            ).fetchall()
+        return [_row_to_record(r) for r in rows]
+
+    def delete_memory_record(self, record_id: str) -> bool:
+        """Soft-delete. User-controlled deletion per the spec's memory
+        transparency requirement — nothing is silently purged, but it's
+        excluded from retrieval and future indexing."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE memory_records SET deleted = 1 WHERE record_id = ?",
+                (record_id,),
+            )
+        return cur.rowcount > 0
+
+    # ---- Procedural memory (workflows) -------------------------------------
+
+    def save_workflow(self, name: str, description: str, steps: list[str]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO workflows (name, description, steps, created_at) "
+                "VALUES (?, ?, ?, datetime('now')) "
+                "ON CONFLICT(name) DO UPDATE SET description=excluded.description, "
+                "steps=excluded.steps",
+                (name, description, json.dumps(steps)),
+            )
+
+    def get_workflow(self, name: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflows WHERE name = ?", (name,)
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "name": row["name"],
+            "description": row["description"],
+            "steps": json.loads(row["steps"]),
+        }
+
+    # ---- Audit log ----------------------------------------------------------
+
+    def log_action(
+        self, action: str, task_id: str = "", agent: str = "", risk: str = "", detail: str = ""
+    ) -> None:
+        """Every agent invocation and every confirmation decision gets logged
+        here — this is what makes SARVOS's actions observable, per the spec's
+        'no complex task should skip planning ... every action observable'
+        principle. It's append-only; nothing here is ever deleted."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO audit_log (timestamp, task_id, agent, risk, action, detail) "
+                "VALUES (datetime('now'), ?, ?, ?, ?, ?)",
+                (task_id, agent, risk, action, detail),
+            )
+
+    def recent_audit_log(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def _row_to_turn(row: sqlite3.Row) -> ConversationTurn:
+    from datetime import datetime as _dt
+
+    return ConversationTurn(
+        turn_id=row["turn_id"],
+        request_id=row["request_id"],
+        role=row["role"],
+        content=row["content"],
+        agent=row["agent"],
+        timestamp=_dt.fromisoformat(row["timestamp"]),
+        metadata=json.loads(row["metadata"]),
+    )
+
+
+def _row_to_record(row: sqlite3.Row) -> MemoryRecord:
+    from datetime import datetime as _dt
+
+    return MemoryRecord(
+        record_id=row["record_id"],
+        text=row["text"],
+        kind=row["kind"],
+        source_turn_id=row["source_turn_id"],
+        created_at=_dt.fromisoformat(row["created_at"]),
+        tags=json.loads(row["tags"]),
+    )
