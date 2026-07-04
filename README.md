@@ -7,8 +7,18 @@ everything else gets built on top of.
 
 ## Run it
 
+**Optional but recommended — set up the free local LLM (Ollama):**
 ```bash
-pip install -r requirements.txt   # or: pip install pydantic scikit-learn numpy
+# Install: see https://ollama.com/download for your OS
+ollama serve                 # starts the local server (localhost:11434)
+ollama pull llama3.2         # one-time download of a small, fast model
+```
+If you skip this, SARVOS still runs — the Coding and General agents will
+tell you plainly that the local model isn't reachable and how to start it,
+instead of crashing or faking a response.
+
+```bash
+pip install -r requirements.txt
 python main.py
 ```
 
@@ -28,11 +38,23 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-13 tests, all passing, covering episodic memory, semantic recall, and —
-most importantly — the confirmation-gating logic, since that's the part
-most likely to silently regress.
+21 tests, all passing, covering episodic memory, semantic recall, the
+confirmation-gating logic (since that's the part most likely to silently
+regress), and the LLM client's graceful-degradation path (Ollama not
+running should never crash the CLI).
 
-## What's actually real here
+## What's actually real here (updated)
+
+- **Agent protocol, Orchestrator, Memory engine, Audit log**: as before —
+  see below.
+- **Coding agent** (`agents/coding.py`) and **General agent**
+  (`agents/general.py`) are now backed by a **real local LLM via Ollama**
+  (`llm/client.py`) — free, no API key, runs entirely on your machine. If
+  Ollama isn't running, they degrade to a clear, honest message telling you
+  how to start it (`ollama serve` / `ollama pull llama3.2`) rather than
+  crashing or fabricating a response. Model and host are configurable via
+  `SARVOS_OLLAMA_MODEL` / `SARVOS_OLLAMA_HOST` environment variables.
+- Everything below from the original Phase 1a build is unchanged.
 
 - **Agent protocol** (`core/schemas.py`): `Task` / `AgentResult` as
   Pydantic models — a real, typed contract every agent speaks.
@@ -53,16 +75,13 @@ most likely to silently regress.
 
 ## What's explicitly stubbed (and why)
 
-- **Coding agent** doesn't call an LLM — it proves routing and returns a
-  labeled stub. Wiring a real model is a one-function change
-  (`_draft_response`) once you have an API client configured.
-- **General agent** is the same story for open-ended chat.
 - **Planner** uses keyword/heuristic routing, not an LLM-based planner.
   This was deliberate: proving the plumbing (protocol, orchestrator,
   confirmation gating) works end-to-end *before* adding LLM cost and
   non-determinism on top of it. Swapping in an LLM-driven planner means
   replacing `PlannerAgent._decompose`; the Task/AgentResult contract
-  doesn't change.
+  doesn't change. (Coding and General agents are no longer stubbed — see
+  above.)
 
 ## Known limitation: semantic search is lexical, not semantic
 
@@ -102,14 +121,20 @@ core/
 agents/
   base.py            BaseAgent interface
   planner.py         Executive Planner (heuristic routing)
-  coding.py          Coding agent (stub response)
-  memory_agent.py    Memory agent + General fallback agent
+  coding.py          Coding agent (real LLM via Ollama, graceful fallback)
+  general.py         General conversational agent (real LLM via Ollama)
+  memory_agent.py    Memory agent (remember/recall/forget)
 memory/
   store.py           SQLite persistence (episodic, semantic, procedural, audit)
   engine.py          MemoryEngine facade + TF-IDF SemanticIndex
+llm/
+  config.py          Environment-driven config, free/local defaults
+  client.py          LLMClient interface + OllamaClient implementation
 tests/
   test_memory.py
   test_orchestrator.py
+  test_agents.py     Memory-agent parsing regression tests
+  test_llm_client.py Ollama-unavailable graceful degradation tests
 main.py              CLI entry point
 ```
 

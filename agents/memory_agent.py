@@ -78,22 +78,3 @@ class MemoryAgent(BaseAgent):
             task_id=task.task_id, agent=self.name, success=True,
             output="Here's what I remember:\n" + "\n".join(lines),
         )
-
-
-class GeneralAgent(BaseAgent):
-    """Fallback conversational agent for anything not routed elsewhere."""
-
-    name = AgentName.GENERAL
-
-    def handle(self, task: Task) -> AgentResult:
-        return AgentResult(
-            task_id=task.task_id,
-            agent=self.name,
-            success=True,
-            output=(
-                "[general-agent stub] I heard: "
-                f"'{task.instruction}'. No specialized agent or LLM chat "
-                "backend is wired up yet for open-ended conversation — "
-                "this proves routing works; plug in a chat model here next."
-            ),
-        )

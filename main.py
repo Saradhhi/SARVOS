@@ -24,7 +24,8 @@ from core.schemas import AgentName
 from memory.engine import MemoryEngine
 from agents.planner import PlannerAgent
 from agents.coding import CodingAgent
-from agents.memory_agent import MemoryAgent, GeneralAgent
+from agents.memory_agent import MemoryAgent
+from agents.general import GeneralAgent
 
 
 def build_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:

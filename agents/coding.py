@@ -1,24 +1,32 @@
 """
-Coding Agent.
-
-Phase 1a scope: proves routing works for coding-flavored requests. It does
-NOT yet execute real code generation via an LLM or touch the
-filesystem/terminal — that's Phase 3 (Automation) territory, where Tool
-Runtime integrations (git, terminal, VS Code) land. Wiring an actual
-code-gen model in is a drop-in replacement for `_draft_response` once an LLM
-client is configured; nothing about the orchestrator or protocol changes.
+Coding Agent — now backed by a real local LLM (Ollama, free/no API key) via
+llm/client.py. It does NOT touch the filesystem/terminal — that's Phase 3
+(Automation) territory, where Tool Runtime integrations (git, terminal, VS
+Code) land. This agent only generates/explains code as text.
 
 Note on confirmation: destructive-risk gating happens centrally in the
 Orchestrator before this agent is ever dispatched (see core/orchestrator.py).
 By the time `handle` runs, either the task was never risky or the user has
 already approved it — this agent doesn't need to (and shouldn't have to)
 re-implement that check.
+
+Graceful degradation: if Ollama isn't installed/running, `handle` falls back
+to a clearly-labeled stub response instead of raising — a missing local LLM
+should never crash the CLI, it should just tell the user how to fix it.
 """
 
 from __future__ import annotations
 
 from core.schemas import AgentName, AgentResult, Task
 from agents.base import BaseAgent
+from llm.client import LLMUnavailable, get_llm_client
+
+SYSTEM_PROMPT = (
+    "You are a precise, concise coding assistant. When asked to write code, "
+    "return the code in a fenced block plus a brief explanation. When asked "
+    "to debug or refactor, point out the specific issue before proposing a "
+    "fix. Do not pad your answer with unnecessary preamble."
+)
 
 
 class CodingAgent(BaseAgent):
@@ -34,13 +42,14 @@ class CodingAgent(BaseAgent):
         )
 
     def _draft_response(self, instruction: str) -> str:
-        # Placeholder for real code generation (LLM call). Explicitly marked
-        # per the spec's "no placeholder implementations unless requested" —
-        # this one IS requested, since wiring a live model is out of scope
-        # for the foundation build.
-        return (
-            "[coding-agent stub] I'd generate/debug code for: "
-            f"'{instruction}'. Real code generation isn't wired up yet — "
-            "this agent currently only proves the routing and confirmation "
-            "flow works end to end."
-        )
+        try:
+            client = get_llm_client()
+            return client.generate(instruction, system=SYSTEM_PROMPT)
+        except LLMUnavailable as e:
+            # Explicit, honest fallback — never silently return a fabricated
+            # "answer" when the real backend couldn't be reached.
+            return (
+                f"[coding-agent: local LLM unavailable] {e}\n\n"
+                f"Once Ollama is running, I'll actually generate/debug code "
+                f"for: '{instruction}'"
+            )

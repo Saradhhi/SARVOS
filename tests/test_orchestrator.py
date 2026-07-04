@@ -9,7 +9,8 @@ from memory.engine import MemoryEngine
 from memory.store import Store
 from agents.planner import PlannerAgent
 from agents.coding import CodingAgent
-from agents.memory_agent import MemoryAgent, GeneralAgent
+from agents.memory_agent import MemoryAgent
+from agents.general import GeneralAgent
 
 
 @pytest.fixture
