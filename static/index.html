@@ -152,6 +152,34 @@
     padding: 2px 0;
   }
 
+  /* ---- Thinking indicator ---- */
+  .msg.thinking {
+    align-self: flex-start;
+    background: var(--graphite-850);
+    border: 1px solid var(--graphite-750);
+    border-bottom-left-radius: 3px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 13px 16px;
+  }
+
+  .thinking-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--slate-400);
+    animation: thinking-bounce 1.2s infinite ease-in-out;
+  }
+
+  .thinking-dot:nth-child(2) { animation-delay: 0.15s; }
+  .thinking-dot:nth-child(3) { animation-delay: 0.3s; }
+
+  @keyframes thinking-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
   /* ---- Confirmation banner ---- */
   .confirm-banner {
     margin: 0 20px 14px 20px;
@@ -276,15 +304,59 @@
 
   .rail-entry {
     color: var(--slate-400);
-    white-space: pre-wrap;
-    word-break: break-word;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--graphite-750);
   }
 
-  .rail-entry .time { color: var(--slate-500); }
-  .rail-entry .action { color: var(--parchment-100); }
-  .rail-entry .risk-safe { color: var(--slate-400); }
-  .rail-entry .risk-sensitive { color: var(--sensitive-500); }
-  .rail-entry .risk-destructive { color: var(--risk-500); font-weight: 600; }
+  .rail-entry:last-child {
+    border-bottom: none;
+  }
+
+  .rail-entry .entry-top {
+    display: flex;
+    gap: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rail-entry .time { color: var(--slate-500); flex-shrink: 0; }
+  .rail-entry .action { color: var(--parchment-100); overflow: hidden; text-overflow: ellipsis; }
+
+  .rail-entry .entry-bottom {
+    margin-top: 3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .risk-badge {
+    display: inline-block;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    padding: 1px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+
+  .risk-badge.risk-safe {
+    color: var(--slate-400);
+    background: rgba(138, 144, 156, 0.12);
+  }
+
+  .risk-badge.risk-sensitive {
+    color: var(--sensitive-500);
+    background: rgba(217, 166, 72, 0.14);
+  }
+
+  .risk-badge.risk-destructive {
+    color: var(--risk-300);
+    background: rgba(217, 97, 79, 0.16);
+    font-weight: 600;
+  }
+
+  .entry-bottom .agent-name { color: var(--slate-400); }
 
   .cursor-line {
     padding: 10px 16px 14px 16px;
@@ -369,6 +441,24 @@ function addMessage(role, content, agent) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+let thinkingEl = null;
+
+function showThinking() {
+  if (thinkingEl) return;
+  thinkingEl = document.createElement('div');
+  thinkingEl.className = 'msg thinking';
+  thinkingEl.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>';
+  messagesEl.appendChild(thinkingEl);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function hideThinking() {
+  if (thinkingEl) {
+    thinkingEl.remove();
+    thinkingEl = null;
+  }
+}
+
 function riskClass(risk) {
   if (risk === 'destructive') return 'risk-destructive';
   if (risk === 'sensitive') return 'risk-sensitive';
@@ -386,9 +476,13 @@ async function refreshLog() {
       const line = document.createElement('div');
       line.className = 'rail-entry';
       const time = (e.timestamp || '').split(' ')[1] || e.timestamp || '';
-      const risk = e.risk ? `[${e.risk}]` : '';
-      line.innerHTML = `<span class="time">${time}</span> <span class="action">${e.action}</span> ` +
-        `<span class="${riskClass(e.risk)}">${e.agent || ''} ${risk}</span>`;
+      const riskLabel = e.risk || 'safe';
+      line.innerHTML =
+        `<div class="entry-top"><span class="time">${time}</span><span class="action">${e.action}</span></div>` +
+        `<div class="entry-bottom">` +
+          (e.agent ? `<span class="agent-name">${e.agent}</span>` : '') +
+          `<span class="risk-badge ${riskClass(riskLabel)}">${riskLabel}</span>` +
+        `</div>`;
       railLogEl.appendChild(line);
     }
     railLogEl.scrollTop = railLogEl.scrollHeight;
@@ -405,6 +499,7 @@ function setBusy(busy) {
 async function sendMessage(text) {
   addMessage('user', text);
   setBusy(true);
+  showThinking();
   try {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -412,8 +507,10 @@ async function sendMessage(text) {
       body: JSON.stringify({ message: text })
     });
     const data = await res.json();
+    hideThinking();
     handleResponse(data);
   } catch (err) {
+    hideThinking();
     addMessage('assistant', `Connection error: ${err}. Is the server running?`);
   } finally {
     setBusy(false);
@@ -444,13 +541,18 @@ form.addEventListener('submit', (e) => {
 confirmYes.addEventListener('click', async () => {
   confirmBanner.classList.remove('visible');
   setBusy(true);
+  showThinking();
   try {
     const res = await fetch('/api/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ approved: true })
     });
+    hideThinking();
     handleResponse(await res.json());
+  } catch (err) {
+    hideThinking();
+    addMessage('assistant', `Connection error: ${err}.`);
   } finally {
     setBusy(false);
     refreshLog();
