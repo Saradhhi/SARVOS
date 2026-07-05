@@ -26,15 +26,22 @@ pip install -r requirements.txt
 python main.py
 ```
 
-**Option B — Web UI:**
+**Option B — Web UI (browser):**
 ```bash
 uvicorn api.server:app --reload
 ```
-Then open http://localhost:8000. Same orchestrator, memory, and agents
-underneath — the web UI is purely an HTTP layer (`api/server.py`) on top,
-nothing about the core logic changed. It adds a live audit-trail panel
-(the "System" rail) so confirmation gating and agent routing are visible
-as they happen, not just logged to a file you'd have to go dig up.
+Then open http://localhost:8000.
+
+**Option C — Desktop app (native window, no browser chrome):**
+```bash
+python desktop.py
+```
+Opens the exact same UI/backend as Option B, but in its own OS window via
+[pywebview](https://pywebview.flowrite.com/) instead of a browser tab — no
+address bar, no tabs. This is a pragmatic middle step before a full
+Electron/Tauri build (which the original spec names as the eventual
+target): same backend, same HTML, just a different window. Moving to
+Electron/Tauri later doesn't require rewriting either.
 
 Try:
 ```
@@ -52,10 +59,12 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-28 tests, all passing: episodic memory, semantic recall, confirmation
-gating (the part most likely to silently regress), LLM graceful degradation,
-and the web API's request/response contract including the confirmation flow
-over HTTP.
+30 tests, all passing (verified stable across repeated runs, including the
+threading/timing-sensitive server-startup tests): episodic memory, semantic
+recall, confirmation gating (the part most likely to silently regress), LLM
+graceful degradation, the web API's request/response contract including
+the confirmation flow over HTTP, and the desktop app's server-readiness
+logic.
 
 ## What's actually real here (updated)
 
@@ -173,7 +182,9 @@ tests/
   test_agents.py     Memory-agent parsing regression tests
   test_llm_client.py Ollama-unavailable graceful degradation tests
   test_api.py        FastAPI endpoint + confirmation-flow tests
+  test_desktop.py    Desktop server-readiness logic tests
 main.py              CLI entry point (still works, independent of the web UI)
+desktop.py           Desktop app entry point (pywebview native window)
 ```
 
 ## Suggested next step
