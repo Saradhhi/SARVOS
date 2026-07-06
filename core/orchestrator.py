@@ -50,8 +50,16 @@ class Orchestrator:
         self.memory = memory
         self.agents = agents
 
-    def handle_user_message(self, text: str, request_id: str) -> list[AgentResult]:
-        """Entry point for a new user turn. Always starts at the Planner."""
+    def handle_user_message(
+        self, text: str, request_id: str, initial_context: dict | None = None
+    ) -> list[AgentResult]:
+        """Entry point for a new user turn. Always starts at the Planner.
+
+        initial_context flows through to every downstream task (Planner
+        already passes task.context to its sub-tasks) -- used by the voice
+        assistant to flag {"spoken": True} so agents can choose spoken-style
+        phrasing instead of the text-formatted responses appropriate for
+        CLI/web, without needing a separate code path for voice."""
         turn = ConversationTurn(request_id=request_id, role="user", content=text)
         self.memory.record_turn(turn)
 
@@ -59,6 +67,7 @@ class Orchestrator:
             parent_request_id=request_id,
             agent=AgentName.PLANNER,
             instruction=text,
+            context=initial_context or {},
         )
         return self._run_queue(deque([root_task]), request_id)
 

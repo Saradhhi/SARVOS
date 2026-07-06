@@ -28,12 +28,23 @@ SYSTEM_PROMPT = (
     "fix. Do not pad your answer with unnecessary preamble."
 )
 
+SPOKEN_SYSTEM_PROMPT = (
+    "You are a precise, concise coding assistant. Your response will be "
+    "read aloud by text-to-speech, not displayed as text -- reading raw "
+    "code syntax character-by-character out loud is unusable, so do NOT "
+    "output code blocks, brackets, or symbols. Instead, describe what the "
+    "code does or what the fix is in plain spoken language (e.g. 'the bug "
+    "is that the loop never increments the counter, so it runs forever' "
+    "rather than showing the actual code). Mention that they can switch to "
+    "text mode to see the actual code. Keep it brief and conversational."
+)
+
 
 class CodingAgent(BaseAgent):
     name = AgentName.CODING
 
     def handle(self, task: Task) -> AgentResult:
-        response = self._draft_response(task.instruction)
+        response = self._draft_response(task.instruction, task.context)
         return AgentResult(
             task_id=task.task_id,
             agent=self.name,
@@ -41,10 +52,11 @@ class CodingAgent(BaseAgent):
             output=response,
         )
 
-    def _draft_response(self, instruction: str) -> str:
+    def _draft_response(self, instruction: str, context: dict) -> str:
+        system_prompt = SPOKEN_SYSTEM_PROMPT if context.get("spoken") else SYSTEM_PROMPT
         try:
             client = get_llm_client()
-            return client.generate(instruction, system=SYSTEM_PROMPT)
+            return client.generate(instruction, system=system_prompt)
         except LLMUnavailable as e:
             # Explicit, honest fallback — never silently return a fabricated
             # "answer" when the real backend couldn't be reached.

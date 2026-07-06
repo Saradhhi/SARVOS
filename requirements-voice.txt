@@ -1,0 +1,9 @@
+# Optional voice stack — install with: pip install -r requirements-voice.txt
+# Kept separate from requirements.txt because these are heavier
+# dependencies (ML models, native audio bindings) that most SARVOS usage
+# (CLI, web UI, desktop app) doesn't need.
+
+openwakeword>=0.4.0   # wake-word detection (free, offline, pretrained models)
+faster-whisper>=1.0   # speech-to-text (free, offline; downloads model on first use)
+pyttsx3>=2.90         # text-to-speech (free, uses OS voices: SAPI5/NSSpeechSynthesizer/espeak)
+sounddevice>=0.4.6    # microphone/speaker I/O (needs PortAudio; see README)

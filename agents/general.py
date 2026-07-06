@@ -20,6 +20,17 @@ SYSTEM_PROMPT = (
     "something you don't; acknowledge uncertainty plainly."
 )
 
+SPOKEN_SYSTEM_PROMPT = (
+    "You are SARVOS, a calm, confident, helpful personal AI assistant. "
+    "Your response will be read aloud by a text-to-speech engine, not "
+    "displayed as text. Respond in short, natural spoken sentences, the "
+    "way a person talks out loud. Never use numbered lists, bullet points, "
+    "markdown, or headers -- say things in a flowing conversational way "
+    "instead (e.g. instead of listing three options, just mention them in "
+    "one or two sentences). Keep it brief: a person listening doesn't want "
+    "a long monologue. Never pretend to know something you don't."
+)
+
 HISTORY_TURNS = 6  # how much recent conversation to include as context
 
 
@@ -28,9 +39,10 @@ class GeneralAgent(BaseAgent):
 
     def handle(self, task: Task) -> AgentResult:
         prompt = self._build_prompt(task.instruction)
+        system_prompt = SPOKEN_SYSTEM_PROMPT if task.context.get("spoken") else SYSTEM_PROMPT
         try:
             client = get_llm_client()
-            response = client.generate(prompt, system=SYSTEM_PROMPT)
+            response = client.generate(prompt, system=system_prompt)
         except LLMUnavailable as e:
             response = (
                 f"[general-agent: local LLM unavailable] {e}\n\n"

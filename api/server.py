@@ -27,28 +27,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from core.orchestrator import Orchestrator, PendingConfirmation
-from core.schemas import AgentName
-from memory.engine import MemoryEngine
-from memory.store import Store
-from agents.planner import PlannerAgent
-from agents.coding import CodingAgent
-from agents.memory_agent import MemoryAgent
-from agents.general import GeneralAgent
+from core.orchestrator import PendingConfirmation
+from core.factory import create_orchestrator
 
 app = FastAPI(title="SARVOS")
 
 # Overridable via env var so tests can point at an isolated DB instead of
 # the real sarvos.db in the working directory.
 _db_path = os.environ.get("SARVOS_DB_PATH", "sarvos.db")
-_memory = MemoryEngine(store=Store(_db_path))
-_agents = {
-    AgentName.PLANNER: PlannerAgent(_memory),
-    AgentName.CODING: CodingAgent(_memory),
-    AgentName.MEMORY: MemoryAgent(_memory),
-    AgentName.GENERAL: GeneralAgent(_memory),
-}
-_orchestrator = Orchestrator(_memory, _agents)
+_orchestrator = create_orchestrator(_db_path)
+_memory = _orchestrator.memory
 
 # Holds the one outstanding confirmation request, if any. A real multi-
 # session server would key this by session id instead of a single slot.

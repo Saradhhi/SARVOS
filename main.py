@@ -20,23 +20,11 @@ from __future__ import annotations
 import uuid
 
 from core.orchestrator import Orchestrator, PendingConfirmation
-from core.schemas import AgentName
-from memory.engine import MemoryEngine
-from agents.planner import PlannerAgent
-from agents.coding import CodingAgent
-from agents.memory_agent import MemoryAgent
-from agents.general import GeneralAgent
+from core.factory import create_orchestrator
 
 
 def build_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
-    memory = MemoryEngine()
-    agents = {
-        AgentName.PLANNER: PlannerAgent(memory),
-        AgentName.CODING: CodingAgent(memory),
-        AgentName.MEMORY: MemoryAgent(memory),
-        AgentName.GENERAL: GeneralAgent(memory),
-    }
-    return Orchestrator(memory, agents)
+    return create_orchestrator(db_path)
 
 
 def main() -> None:

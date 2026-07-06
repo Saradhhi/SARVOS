@@ -43,6 +43,52 @@ Electron/Tauri build (which the original spec names as the eventual
 target): same backend, same HTML, just a different window. Moving to
 Electron/Tauri later doesn't require rewriting either.
 
+**Option D — Voice (wake word + speech in/out):**
+```bash
+pip install -r requirements-voice.txt
+python -m voice.assistant
+```
+
+**Read this before using it — real limitations, not caveats-for-show:**
+
+- **The wake phrase is "Hey Jarvis," not "Hey SARVOS."** openWakeWord (the
+  free/offline wake-word engine used here) ships a fixed set of pretrained
+  models: `alexa`, `hey_jarvis`, `hey_mycroft`, `timer`, `weather`. It does
+  NOT include "Hey SARVOS" — training a genuinely custom wake word is a
+  separate ML project (synthetic data generation + training pipeline), out
+  of scope here. `hey_jarvis` is the closest thematic stand-in and is the
+  default (`SARVOS_WAKE_WORD` env var to change it to another bundled
+  option).
+- **Silence detection is a simple RMS energy threshold, not a trained VAD.**
+  Good enough in a quiet room; will likely cut off speech too early, or not
+  end recording promptly, in a noisy environment. Tune
+  `SARVOS_SPEECH_RMS_THRESHOLD` / `SARVOS_SILENCE_SECONDS` if needed.
+- **TTS uses your OS's built-in voice** (Windows SAPI5) via pyttsx3, not a
+  higher-quality model like Piper — chosen deliberately to avoid extra
+  setup (downloading a platform binary + voice model files) for a first
+  working version. If no TTS engine is available at all, SARVOS degrades
+  to printing text instead of crashing (verified: this sandbox has no
+  espeak installed on Linux, and the fallback path works exactly as
+  designed).
+- **This could only be partially tested before reaching you.** The
+  sandbox this was built in has no microphone or speaker at all — not even
+  a way to simulate one. What WAS verified here, against the real
+  libraries (not mocked): the wake-word model actually loads and runs
+  inference correctly (caught and fixed a real bug — the constructor
+  argument name was wrong until tested against the actual installed
+  library), TTS's graceful fallback when no engine exists, STT's silence
+  short-circuit avoiding an unnecessary model load, and the full
+  confirmation-flow conversation logic (yes/no handling, ambiguous
+  response handling, pending-state blocking) — all with real code, no
+  audio hardware needed for that part. What could NOT be verified here:
+  whether the wake word actually triggers reliably on your voice, mic
+  levels, and end-to-end audio quality. That needs your machine.
+
+**How it works:** say "Hey Jarvis," wait for it to respond, then speak your
+request. It'll ask "yes" or "no" out loud for anything destructive (same
+confirmation gate as CLI/web/desktop — all four interfaces share the exact
+same orchestrator via `core/factory.py`). Ctrl+C to stop.
+
 Try:
 ```
 remember that I prefer dark mode
@@ -59,12 +105,14 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-30 tests, all passing (verified stable across repeated runs, including the
-threading/timing-sensitive server-startup tests): episodic memory, semantic
-recall, confirmation gating (the part most likely to silently regress), LLM
-graceful degradation, the web API's request/response contract including
-the confirmation flow over HTTP, and the desktop app's server-readiness
-logic.
+41 tests, all passing (verified stable across repeated runs, including
+threading/timing-sensitive server-startup tests, and real — not mocked —
+inference against the openWakeWord library): episodic memory, semantic
+recall, confirmation gating, LLM graceful degradation, the web API's
+request/response contract, the desktop app's server-readiness logic, the
+voice assistant's conversation/confirmation logic, and wake-word model
+loading (including a real bug caught and fixed by actually running the
+model instead of assuming the API).
 
 ## What's actually real here (updated)
 
@@ -160,6 +208,9 @@ Deliberately not a generic chat-bubble template. Design tokens:
 core/
   schemas.py        Task, AgentResult, ConversationTurn, MemoryRecord
   orchestrator.py    Task queue, routing, confirmation gating, audit logging
+  factory.py         Shared create_orchestrator() -- used by CLI, web, voice
+                      (added to stop three separate copies of the same
+                      wiring code from drifting out of sync)
 agents/
   base.py            BaseAgent interface
   planner.py         Executive Planner (heuristic routing)
@@ -176,6 +227,14 @@ api/
   server.py          FastAPI wrapper around the orchestrator (web UI backend)
 static/
   index.html         Web UI: chat + live audit-trail rail
+voice/
+  config.py          Voice settings (wake word, VAD thresholds, etc.)
+  audio_io.py         Microphone recording + silence detection
+  wake_word.py       openWakeWord detector
+  stt.py             faster-whisper speech-to-text
+  tts.py             pyttsx3 text-to-speech, graceful fallback
+  assistant.py       VoiceAssistant -- conversation logic (testable) +
+                      real audio loop (not testable without hardware)
 tests/
   test_memory.py
   test_orchestrator.py
@@ -183,6 +242,8 @@ tests/
   test_llm_client.py Ollama-unavailable graceful degradation tests
   test_api.py        FastAPI endpoint + confirmation-flow tests
   test_desktop.py    Desktop server-readiness logic tests
+  test_voice_assistant.py  Voice conversation/confirmation logic tests
+  test_wake_word.py  Real (non-mocked) openWakeWord model loading tests
 main.py              CLI entry point (still works, independent of the web UI)
 desktop.py           Desktop app entry point (pywebview native window)
 ```
