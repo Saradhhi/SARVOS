@@ -25,14 +25,29 @@ def test_memory_utterance_routes_correctly(assistant):
 
 
 def test_recall_utterance_after_remembering(assistant):
-    """Uses a query with real word overlap ('jazz'), consistent with the
-    documented TF-IDF-is-lexical-not-semantic limitation (see
-    tests/test_memory.py::test_tfidf_backend_is_lexical_not_semantic) —
-    a query like 'my preferences' wouldn't match 'jazz' for the same
-    reason it doesn't there, not because voice broke anything new."""
+    """Regression test for a real gap found via live testing (not
+    hypothesized in advance): 'what do you know about X' didn't match ANY
+    of the Planner's memory-recall keywords, so it silently skipped
+    memory retrieval entirely and went to general chat instead -- which
+    has no access to stored facts. This test only appeared to pass before
+    by accident: without Ollama running, the LLM-unavailable fallback
+    happened to echo the input text verbatim (including the word
+    "jazz"), masking that memory was never actually being consulted. It
+    failed for real on a machine with Ollama running, which gave a
+    genuine answer about jazz without happening to say the word "jazz"
+    itself -- correctly exposing the routing gap.
+
+    Fixed by broadening MEMORY_KEYWORDS (agents/planner.py) to include
+    'what do you know', 'do you know', etc. This test now verifies real
+    routing to the Memory agent (confirmed via handle_utterance's actual
+    output format, "Here's what I remember: ..."), not accidental
+    string overlap."""
     assistant.handle_utterance("remember that I like jazz music")
     response = assistant.handle_utterance("what do you know about jazz")
     assert "jazz" in response.lower()
+    assert "remember" in response.lower()  # confirms this went through
+    # the Memory agent's real recall path, not general chat happening to
+    # mention jazz for some unrelated reason
 
 
 def test_destructive_utterance_asks_for_spoken_confirmation(assistant):

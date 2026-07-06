@@ -57,6 +57,17 @@ FOLLOWUP_TIMEOUT_SECONDS = float(os.environ.get("SARVOS_FOLLOWUP_TIMEOUT_SECONDS
 # or not eagerly enough.
 SPEECH_RMS_THRESHOLD = float(os.environ.get("SARVOS_SPEECH_RMS_THRESHOLD", "0.02"))
 
+# Threshold for detecting a REAL mid-speech interruption (while TTS is
+# actively playing), separate from and higher than SPEECH_RMS_THRESHOLD
+# above. Deliberately higher: without acoustic echo cancellation, SARVOS's
+# own voice bleeding into the mic would otherwise frequently trigger a
+# false "interruption." This reduces, but doesn't eliminate, that problem
+# -- if false interruptions are still frequent, a headset (mic physically
+# separated from speaker output) is the reliable fix, not a higher
+# threshold alone. Tune via env var based on your actual speaker volume
+# and mic sensitivity.
+BARGE_IN_RMS_THRESHOLD = float(os.environ.get("SARVOS_BARGE_IN_RMS_THRESHOLD", "0.08"))
+
 TTS_RATE_WORDS_PER_MINUTE = int(os.environ.get("SARVOS_TTS_RATE", "175"))
 
 # Brief pause after TTS finishes speaking before the mic starts listening

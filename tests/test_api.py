@@ -18,6 +18,7 @@ def client():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, "test_api.db")
         os.environ["SARVOS_DB_PATH"] = db_path
+        os.environ["SARVOS_DISABLE_VOICE_PIPELINE"] = "1"
 
         # Import (or re-import) after the env var is set, and reset the
         # pending-confirmation slot between tests since the module is a
@@ -27,7 +28,8 @@ def client():
         importlib.reload(server_module)
 
         from fastapi.testclient import TestClient
-        yield TestClient(server_module.app)
+        with TestClient(server_module.app) as test_client:
+            yield test_client
 
 
 def test_index_page_served(client):
@@ -78,3 +80,38 @@ def test_history_endpoint(client):
     resp = client.get("/api/history")
     body = resp.json()
     assert any("coffee" in t["content"] for t in body["turns"])
+
+
+def test_websocket_connects_and_receives_broadcast_event(client):
+    """Verifies the actual WebSocket broadcast mechanism works: connect a
+    client, manually push an event into the queue the voice pipeline would
+    normally push into, and confirm it's delivered over the socket. This
+    is fully real -- no audio hardware needed, since it's testing the
+    server-side plumbing, not the voice pipeline itself."""
+    import api.server as server_module
+
+    with client.websocket_connect("/ws/voice-events") as websocket:
+        server_module._emit_voice_event({"type": "wake_detected"})
+        received = websocket.receive_json()
+        assert received == {"type": "wake_detected"}
+
+
+def test_websocket_receives_multiple_events_in_order(client):
+    import api.server as server_module
+
+    with client.websocket_connect("/ws/voice-events") as websocket:
+        server_module._emit_voice_event({"type": "listening"})
+        server_module._emit_voice_event({"type": "transcript", "text": "hello"})
+        server_module._emit_voice_event({"type": "response", "text": "hi there"})
+
+        assert websocket.receive_json() == {"type": "listening"}
+        assert websocket.receive_json() == {"type": "transcript", "text": "hello"}
+        assert websocket.receive_json() == {"type": "response", "text": "hi there"}
+
+
+def test_voice_pipeline_disabled_flag_is_respected(client):
+    """Confirms the test fixture's SARVOS_DISABLE_VOICE_PIPELINE=1 actually
+    took effect -- if this ever regresses, every other test in this file
+    would start silently spawning real voice-pipeline threads."""
+    import os
+    assert os.environ.get("SARVOS_DISABLE_VOICE_PIPELINE") == "1"

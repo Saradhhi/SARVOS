@@ -16,11 +16,19 @@ Deliberately split into two parts:
 Confirmation handling mirrors the CLI/web pattern: a destructive action
 triggers a spoken prompt, and the NEXT utterance is interpreted as yes/no
 rather than routed through the planner again.
+
+Optional on_event callback: lets a caller (e.g. api/server.py's WebSocket
+broadcaster) observe pipeline state in real time -- wake word detected,
+listening, transcript, thinking, response, speaking start/end,
+confirmation required. Purely additive: passing None (the default) means
+zero behavior change from before this existed, and run() still works
+standalone via `python -m voice.assistant` exactly as it did.
 """
 
 from __future__ import annotations
 
 import uuid
+from typing import Callable
 
 from core.factory import create_orchestrator
 from core.orchestrator import Orchestrator, PendingConfirmation
@@ -31,10 +39,19 @@ NO_WORDS = {"no", "nope", "cancel", "stop", "don't", "do not"}
 
 
 class VoiceAssistant:
-    def __init__(self, orchestrator: Orchestrator | None = None):
+    def __init__(
+        self,
+        orchestrator: Orchestrator | None = None,
+        on_event: Callable[[dict], None] | None = None,
+    ):
         self.orchestrator = orchestrator or create_orchestrator()
         self._pending_task: Task | None = None
         self._pending_request_id: str | None = None
+        self.on_event = on_event
+
+    def _emit(self, event_type: str, **kwargs) -> None:
+        if self.on_event is not None:
+            self.on_event({"type": event_type, **kwargs})
 
     def handle_utterance(self, text: str) -> str:
         """Given transcribed speech, returns the text SARVOS should speak
@@ -93,8 +110,7 @@ class VoiceAssistant:
         from voice.wake_word import WakeWordDetector
         from voice.stt import SpeechToText
         from voice.tts import TextToSpeech
-        from voice.audio_io import record_utterance, quick_listen_check
-        from voice.text_utils import split_into_sentences
+        from voice.audio_io import record_utterance, ContinuousMicMonitor
         import time
 
         detector = WakeWordDetector()
@@ -104,32 +120,44 @@ class VoiceAssistant:
         print(f"Listening for wake word '{detector.model_name}'... (Ctrl+C to stop)")
 
         def speak_response(response: str) -> bool:
-            """Speaks one sentence at a time, checking BETWEEN sentences
-            (while SARVOS is silent) for interruption. Returns True if
-            interrupted -- i.e. the person started talking before SARVOS
-            finished, so remaining sentences are skipped and control
-            returns immediately to listening.
+            """Speaks the FULL response while continuously monitoring the
+            microphone in real time -- this is genuine mid-speech
+            interruption (not just checking between sentences, the
+            earlier approach). Returns True if interrupted.
 
-            This is deliberately NOT continuous "listen while speaking"
-            barge-in: without a headset (no echo/acoustic cancellation),
-            monitoring the mic WHILE audio is actively playing risks
-            picking up SARVOS's own voice as if it were the person
-            interrupting -- this was observed directly during real-machine
-            testing (a garbled transcription of SARVOS's own tail-end
-            speech, followed by SARVOS confusingly responding to itself).
-            Checking only in the gaps between sentences is a real,
-            testable middle ground, at the cost of not being able to
-            interrupt mid-sentence, only between sentences."""
-            sentences = split_into_sentences(response)
-            for sentence in sentences:
-                tts.speak(sentence)
-                time.sleep(config.POST_SPEECH_DRAIN_SECONDS)
-                if quick_listen_check(config.INTERRUPT_CHECK_SECONDS):
-                    return True
-            return False
+            Uses a dedicated, higher RMS threshold
+            (config.BARGE_IN_RMS_THRESHOLD) than normal speech detection,
+            specifically to reduce false triggers from SARVOS hearing its
+            own voice -- there's no acoustic echo cancellation in this
+            build. This reduces, but doesn't eliminate, that problem; a
+            headset gives much more reliable results than relying on the
+            threshold alone. See ContinuousMicMonitor's docstring in
+            voice/audio_io.py for the full explanation."""
+            self._emit("speaking_start", text=response)
+
+            monitor = ContinuousMicMonitor()
+            monitor.start()
+            try:
+                def stop_check() -> bool:
+                    return monitor.is_loud_enough(config.BARGE_IN_RMS_THRESHOLD)
+
+                interrupted = tts.speak_interruptible(response, stop_check=stop_check)
+            finally:
+                # MUST fully stop before anything else touches the
+                # microphone (record_utterance next) -- same
+                # device-contention class of bug found and fixed for the
+                # wake-word detector earlier in this project.
+                monitor.stop()
+
+            if interrupted:
+                self._emit("speaking_interrupted")
+            else:
+                self._emit("speaking_end")
+            return interrupted
 
         def on_wake():
             print(f"[wake word detected: '{detector.model_name}']")
+            self._emit("wake_detected")
             tts.speak("Yes?")
             time.sleep(config.POST_SPEECH_DRAIN_SECONDS)
             conversation_loop(wait_for_speech=None)
@@ -142,18 +170,49 @@ class VoiceAssistant:
             after this many seconds of silence', used for ordinary
             follow-up turns."""
             while True:
+                self._emit("listening")
                 audio = record_utterance(max_wait_for_speech_s=wait_for_speech)
                 text = stt.transcribe(audio)
                 if not text:
                     print(f"[no follow-up -- back to listening for "
                           f"'{detector.model_name}']")
+                    self._emit("idle")
                     return
 
                 print(f"you (voice)> {text}")
-                response = self.handle_utterance(text)
-                print(f"sarvos (voice)> {response}")
+                self._emit("transcript", text=text)
 
-                interrupted = speak_response(response)
+                try:
+                    self._emit("thinking")
+                    response = self.handle_utterance(text)
+                    print(f"sarvos (voice)> {response}")
+
+                    # self._pending_task is set by handle_utterance itself
+                    # when this turn resulted in a NEW confirmation request
+                    # -- reused here rather than changing handle_utterance's
+                    # return contract, since that state already exists for
+                    # exactly this purpose (see handle_utterance/​
+                    # _resolve_pending_confirmation above).
+                    if self._pending_task is not None:
+                        self._emit("confirmation_required", prompt=response)
+                    else:
+                        self._emit("response", text=response)
+
+                    interrupted = speak_response(response)
+                except Exception as e:
+                    # Defense in depth: a real crash (a pyttsx3
+                    # "run loop already started" RuntimeError was found
+                    # during live testing here) previously propagated all
+                    # the way up and killed this ENTIRE background thread
+                    # -- meaning wake-word detection stopped responding
+                    # AT ALL until the whole app was restarted, which
+                    # looked like "stuck," not "crashed," from the
+                    # outside. One bad turn should end that turn, not the
+                    # whole voice pipeline.
+                    print(f"[voice pipeline] Turn failed, recovering: {e}")
+                    self._emit("idle")
+                    return
+
                 if interrupted:
                     print("[interrupted -- listening to what you're saying now]")
                     wait_for_speech = None

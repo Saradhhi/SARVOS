@@ -21,7 +21,20 @@ from agents.browser_intent import classify as classify_browser, Operation as Bro
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
-MEMORY_KEYWORDS = ("remember", "recall", "what did i", "forget", "my preference")
+MEMORY_KEYWORDS = (
+    "remember", "recall", "what did i", "forget", "my preference",
+    # Broadened after a real gap was found: "what do you know about X" is
+    # a completely natural way to ask about something you told SARVOS to
+    # remember, but none of the keywords above matched it -- it silently
+    # skipped memory recall entirely and went straight to general chat,
+    # which has no access to stored facts at all. A test relying on this
+    # exact phrasing only passed before by accident (the LLM-unavailable
+    # fallback happened to echo the input text verbatim, masking that the
+    # routing gap existed) -- it failed for real once Ollama was actually
+    # running and gave a genuine answer that didn't happen to repeat the
+    # keyword.
+    "what do you know", "do you know", "have i told you", "have i mentioned",
+)
 
 
 class PlannerAgent(BaseAgent):

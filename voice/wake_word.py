@@ -132,7 +132,19 @@ class WakeWordDetector:
 
             if detected:
                 model.reset()  # avoid the tail end of "Hey Jarvis" immediately re-triggering
-                on_wake()
+                try:
+                    on_wake()
+                except Exception as e:
+                    # Defense in depth, one more layer beyond whatever
+                    # on_wake() does internally: a crash found during live
+                    # testing (pyttsx3's "run loop already started")
+                    # previously propagated all the way up through here
+                    # and killed the ENTIRE wake-word listening loop --
+                    # meaning "Hey Jarvis" stopped working AT ALL until the
+                    # whole app was restarted. This loop's only job is to
+                    # keep listening indefinitely; nothing on_wake() does
+                    # should be able to end that.
+                    print(f"[wake_word] on_wake() failed, still listening: {e}")
 
     def listen_in_background(self, on_wake: Callable[[], None]) -> threading.Thread:
         """Starts `listen` on a daemon thread and returns it."""

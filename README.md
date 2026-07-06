@@ -160,11 +160,42 @@ instead of via a stale default. Worth knowing if you extend this code:
 reference `automation_config.SOMETHING` at the point of use, not as an
 imported bare name or default parameter.
 
-**Not yet built**: browser automation, IDE integration, and a general
-workflow engine — each a substantial separate project (browser automation
-alone needs Playwright plus real page-state handling). This automation
-agent is the foundation those would eventually call into, not a
-replacement for building them.
+**Not yet built**: IDE integration and a general workflow engine — each a
+substantial separate project. This automation agent is the foundation
+those would eventually call into, not a replacement for building them.
+
+## Browser automation (real Playwright, read-only)
+
+```
+open website github.com
+take a screenshot of example.com
+```
+
+Real headless-Chromium navigation via Playwright — extracts the page
+title and visible text (capped at `SARVOS_MAX_PAGE_TEXT_LENGTH`, default
+3000 chars), or saves a real screenshot to `sarvos_workspace/screenshots/`.
+
+**Scope, deliberately narrow**: read-only browsing only. NOT included:
+form filling/submission, login, downloads, or multi-step flows — those
+have real side effects on external sites and deserve their own
+separately-scoped, separately-tested work.
+
+**Safety**: only `http://` and `https://` URLs are accepted. `file://`,
+`javascript:`, `data:`, `mailto:`, and other schemes are explicitly
+refused — this closes off using "open a website" as a backdoor into
+reading local files or executing script URIs. **A real bug was caught and
+fixed here during testing**: the first version of the scheme check
+required `://` to detect a scheme at all, which `javascript:alert(1)`
+doesn't have — it was being silently treated as scheme-less and getting
+`https://` prepended to it (`https://javascript:alert(1)`), which then
+WOULD have passed the "is this http(s)?" check, completely defeating the
+safety filter. A test actually failing, not advance reasoning, is what
+caught this.
+
+Tested against a real local HTTP server (no external network dependency
+for the test suite) with real Playwright navigation, a real screenshot
+file written and verified non-empty, and confirmed live against actual
+external sites (github.com) during manual testing.
 
 ## Run the tests
 
@@ -173,15 +204,15 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-94 tests, all passing: episodic memory, semantic recall, confirmation
+141 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
 silence-detection decision logic, sentence splitting, Whisper hallucination
-filtering, and — new — real file operations, path-safety enforcement, and
-real git subprocess calls for the Automation agent, including an
-end-to-end test proving the confirmation gate actually blocks/allows a
-REAL filesystem effect, not just a simulated one.
+filtering, real file operations, path-safety enforcement, real git
+subprocess calls, real Playwright browser automation, and the new
+WebSocket voice-event broadcast mechanism (real connect + real message
+delivery, tested via FastAPI's TestClient).
 
 ## What's actually real here (updated)
 
@@ -254,22 +285,160 @@ system. Recommend keeping that split.
 
 ## Web UI design notes
 
-Deliberately not a generic chat-bubble template. Design tokens:
+The UI has been through two designs: an initial graphite/amber console
+look, then a full redesign to the current JARVIS-style voice orb + chat
+panel (70/30 split), per explicit spec. Current design:
 
-- **Palette**: deep graphite background (`#14171c`), warm amber accent
-  (`#d9a648`) — chosen over the more common near-black+neon-green AI
-  aesthetic to fit "personal operating system" rather than "chatbot demo."
-  Destructive/risk states use a separate coral-red (`#d9614f`), never the
-  primary accent, so danger reads as an exception rather than the theme.
-- **Type**: IBM Plex Mono for system/audit data and the wordmark (technical,
-  "operating system" register), Inter for conversational text (readable,
-  human register). The split itself signals which parts of the UI are
-  "system" vs. "conversation."
-- **Signature element**: the right-hand System/Audit Trail rail — a live,
-  terminal-styled readout of the same audit log the orchestrator already
-  writes to SQLite. This isn't decorative: it's the spec's "every action
-  should be observable" principle made visible in real time, color-coded by
-  risk level, rather than something you'd have to go query separately.
+- **Palette**: near-black background (`#0a0a0f`), cyan-to-blue glowing orb
+  gradient — a deliberate, explicitly-requested aesthetic reference (JARVIS),
+  not a generic default.
+- **Orb states**: idle (slow ~4s breathing), listening (ripple + REAL
+  microphone-amplitude-driven glow via Web Audio API's AnalyserNode —
+  genuinely reactive, not simulated), thinking (tighter purple-tinted
+  pulse while waiting on a response), speaking (pulse driven by
+  `SpeechSynthesisUtterance`'s `onboundary` word-timing events — see
+  honest limitation below).
+- **Signature element carried over**: the System Audit Trail, now a
+  slide-out drawer (toggle button in the header) instead of a persistent
+  rail, to preserve the exact 70/30 orb/chat split the redesign spec asked
+  for without losing that observability feature.
+
+**Honest limitation, stated in the code too**: browsers do not expose
+`SpeechSynthesis`'s audio output to `AnalyserNode` — there's no standard
+way to get a real waveform reading from `window.speechSynthesis`. The
+speaking-state pulse is therefore timing-driven (real per-word timing,
+not real amplitude), both for typed-message TTS (browser SpeechSynthesis)
+and reflected via WebSocket for the voice pipeline's responses. The
+*listening* state's reactivity is fully real, by contrast — real
+microphone amplitude, analyzed live.
+
+## Wake-word → orb UI integration (WebSocket)
+
+The standalone voice pipeline (`python -m voice.assistant`, wake word +
+STT + TTS) now also drives this same web/desktop UI, not just a terminal.
+Say "Hey Jarvis" while the desktop app or web UI is open, and the orb
+visually reflects the pipeline's real state — listening, thinking,
+speaking — with the transcript and response appearing in the chat panel
+too, sharing the same orchestrator (and therefore the same memory/history)
+as typed messages.
+
+**How it works**: `api/server.py` starts the wake-word pipeline
+(`VoiceAssistant`) on a background thread at server startup, sharing the
+same `_orchestrator` used by `/api/chat`. The pipeline pushes state
+through a thread-safe bridge (`call_soon_threadsafe` into an
+`asyncio.Queue` — NOT a blocking `queue.Queue` wrapped in `asyncio.to_thread`,
+which was tried first and caused the test suite to hang on shutdown,
+since a blocked OS thread doesn't respond to asyncio-level cancellation)
+to an async broadcaster, which fans events out to any browser connected
+to `/ws/voice-events`.
+
+**Gracefully degrades**: if voice dependencies aren't installed, or this
+machine has no microphone, the server logs a message and keeps running
+normally — text chat and everything else is unaffected. Verified directly:
+in the sandbox this was built in (no microphone at all), the pipeline
+attempts to start, fails cleanly with `Error querying device -1`, and the
+server continues serving requests normally throughout.
+
+**Per explicit choice, the browser's click-to-talk mic button (Web Speech
+API) was removed entirely** in favor of wake-word-only voice input. Typed
+messages still work exactly as before via the text input.
+
+**Known scope limit**: confirmation state is tracked separately for typed
+messages (`api/server.py`'s `_pending` dict) vs. voice (`VoiceAssistant`'s
+own `_pending_task`) — a voice-triggered confirmation shows in the UI as
+informational only (no clickable buttons; the prompt says to answer by
+voice), since clicking Proceed/Cancel wouldn't resolve the voice
+pipeline's separate pending state. Confirmations naturally resolve within
+whichever modality triggered them, which covers the common case; unifying
+the two pending-confirmation trackers is a reasonable future improvement,
+not done here to keep this change scoped.
+
+## Real mid-speech interruption
+
+Earlier versions only checked for interruption *between* sentences. This
+now checks continuously, in real time, while SARVOS is actually talking —
+genuine barge-in, not just a gap-in-the-pauses approximation.
+
+**How**: `voice/tts.py`'s `speak_interruptible()` runs TTS on a background
+thread while `voice/audio_io.py`'s `ContinuousMicMonitor` samples the
+microphone in a loop on another thread; the moment your volume crosses
+`SARVOS_BARGE_IN_RMS_THRESHOLD` (default `0.08`, deliberately higher than
+normal speech detection's `0.02`), playback is cut instantly and SARVOS
+starts listening to you.
+
+**Why a separate, higher threshold**: there's no acoustic echo
+cancellation in this build. Without a higher bar specifically for
+interruption, SARVOS would frequently "interrupt itself" by hearing its
+own voice through the speaker. This reduces that problem but doesn't
+eliminate it — **a headset (mic physically separated from speaker
+output) gives much more reliable results than tuning the threshold
+alone.** If it's still too sensitive or not sensitive enough for your
+setup:
+```
+set SARVOS_BARGE_IN_RMS_THRESHOLD=0.12
+```
+
+**A real crash found during live testing, and how it was fixed**: the
+first version of interruption caused `RuntimeError: run loop already
+started` after interrupting one utterance and then speaking the next —
+pyttsx3's underlying Windows speech driver doesn't always finish tearing
+down instantly after `engine.stop()`, and starting a second engine's
+`runAndWait()` too soon collided with the first one's still-in-progress
+shutdown. Worse, that crash **killed the entire background voice
+pipeline thread** — "Hey Jarvis" stopped responding at all afterward,
+which looked exactly like "stuck," not "crashed," from the outside, since
+typed chat kept working fine (different code path). Two fixes, both now
+tested:
+1. **Root cause**: `TextToSpeech` now holds a lock across the *entire*
+   duration of every speak call, including a full (non-timeout) thread
+   join — so a new engine can never start while a previous one (even an
+   interrupted one) hasn't *completely* finished. The original code used
+   a 2-second timeout on the join, which could return before the engine
+   had truly finished, letting the next call race ahead into the crash.
+2. **Defense in depth**: both the per-turn conversation logic
+   (`voice/assistant.py`) and the wake-word listen loop itself
+   (`voice/wake_word.py`) now catch exceptions locally — a failure in one
+   turn logs an error and returns to wake-word-only listening, rather
+   than propagating up and ending the entire pipeline. One bad turn
+   should never require restarting the whole app again.
+
+## More natural, less robotic responses
+
+The system prompts (`agents/general.py`) now explicitly push against
+corporate-assistant phrasing — no more "I'd be happy to assist you with
+that," "Certainly!," or "As an AI, I don't have..." Instead: contractions,
+directness, brevity, and permission to have a bit of personality. Applies
+to both typed and spoken responses. This is prompt-level guidance to a
+small local model (llama3.2) — expect it to help noticeably, not to be
+perfect every time.
+
+## Auto-start at login (Windows)
+
+So SARVOS is running and listening for "Hey Jarvis" whenever you sit down
+at the laptop, without manually launching it first:
+
+1. Confirm `start_sarvos.bat` (in the project root) works by double-clicking
+   it — it should launch SARVOS with no visible console window.
+2. Press `Win + R`, type `shell:startup`, press Enter — this opens your
+   Windows Startup folder.
+3. Right-click `start_sarvos.bat` → **Create shortcut**, then drag that
+   shortcut into the Startup folder from step 2.
+4. Log out and back in (or restart) to confirm it launches automatically.
+
+**What to expect**: the app window starts **minimized** — out of your way,
+but still running and listening — and automatically restores and comes to
+the front the moment "Hey Jarvis" triggers, so you don't need to have
+already had it open or focused.
+
+**Optional — give the Startup shortcut the SARVOS icon too**: the app
+window/taskbar icon (a cyan-to-blue orb, matching the UI) is wired up
+automatically via `static/sarvos_icon.ico`. Windows shortcuts (`.lnk`
+files) pick their own icon separately, so to make the Startup-folder
+shortcut match:
+1. Right-click the shortcut you created in step 3 above → **Properties**
+2. Click **Change Icon...**
+3. Click **Browse...**, navigate to `Desktop\sarvos\static\sarvos_icon.ico`,
+   select it, click **OK** twice.
 
 ## Project layout
 
@@ -291,6 +460,9 @@ agents/
   automation_intent.py  Shared intent classification (Planner + agent
                           agree on what an instruction means and its risk)
   automation_config.py  Workspace sandbox root, size/timeout limits
+  browser.py         Real Playwright browser automation (read-only)
+  browser_intent.py  Browser instruction classification + scheme safety
+  browser_config.py  Screenshot sandbox, timeouts, headless default
 memory/
   store.py           SQLite persistence (episodic, semantic, procedural, audit)
   engine.py          MemoryEngine facade + TF-IDF SemanticIndex

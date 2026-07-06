@@ -8,17 +8,17 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --graphite-950: #14171c;
-    --graphite-850: #1c2028;
-    --graphite-750: #262b35;
-    --graphite-650: #333a46;
-    --amber-500: #d9a648;
-    --amber-300: #e8c483;
-    --parchment-100: #ece8de;
-    --slate-400: #8a909c;
-    --slate-500: #6b7280;
-    --risk-500: #d9614f;
-    --risk-300: #e69187;
+    --bg: #0a0a0f;
+    --panel-bg: #10111a;
+    --panel-border: #1c2030;
+    --cyan: #22d3ee;
+    --cyan-bright: #67e8f9;
+    --blue: #3b82f6;
+    --blue-deep: #1d4ed8;
+    --text: #e7ecf3;
+    --text-muted: #7c8494;
+    --risk-500: #e0645a;
+    --risk-300: #ef9a91;
     --sensitive-500: #d9a648;
     --font-mono: 'IBM Plex Mono', monospace;
     --font-body: 'Inter', sans-serif;
@@ -28,8 +28,8 @@
 
   body {
     margin: 0;
-    background: var(--graphite-950);
-    color: var(--parchment-100);
+    background: var(--bg);
+    color: var(--text);
     font-family: var(--font-body);
     height: 100vh;
     overflow: hidden;
@@ -46,378 +46,534 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--graphite-750);
-    background: var(--graphite-850);
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    z-index: 10;
   }
 
   .wordmark {
     font-family: var(--font-mono);
     font-weight: 600;
-    font-size: 15px;
-    letter-spacing: 0.12em;
-    color: var(--parchment-100);
+    font-size: 14px;
+    letter-spacing: 0.14em;
+    color: var(--text);
   }
 
   .status-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--amber-500);
-    box-shadow: 0 0 0 0 rgba(217, 166, 72, 0.6);
-    animation: pulse 2.4s infinite;
+    background: var(--cyan);
+    box-shadow: 0 0 8px 1px var(--cyan);
+    animation: pulse-dot 2.4s infinite;
   }
 
-  @keyframes pulse {
-    0%   { box-shadow: 0 0 0 0 rgba(217, 166, 72, 0.55); }
-    70%  { box-shadow: 0 0 0 6px rgba(217, 166, 72, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(217, 166, 72, 0); }
+  @keyframes pulse-dot {
+    0%   { opacity: 0.5; }
+    50%  { opacity: 1; }
+    100% { opacity: 0.5; }
   }
 
   .tagline {
-    font-size: 12px;
-    color: var(--slate-400);
+    font-size: 11.5px;
+    color: var(--text-muted);
     letter-spacing: 0.03em;
-    margin-left: 2px;
   }
 
-  /* ---- Body layout ---- */
+  .header-spacer { flex: 1; }
+
+  .system-toggle {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .system-toggle:hover { color: var(--text); border-color: var(--cyan); }
+
+  /* ---- Body: orb panel (70%) + chat panel (30%) ---- */
   .body {
     display: grid;
-    grid-template-columns: 1fr 300px;
+    grid-template-columns: 7fr 3fr;
     min-height: 0;
+    position: relative;
   }
 
-  @media (max-width: 760px) {
+  @media (max-width: 820px) {
     .body { grid-template-columns: 1fr; }
-    .rail { display: none; }
+    .orb-panel { display: none; }
   }
 
-  /* ---- Chat column ---- */
-  .chat-col {
+  /* ---- Orb panel ---- */
+  .orb-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background:
+      radial-gradient(ellipse at center, rgba(34,211,238,0.05) 0%, transparent 60%),
+      var(--bg);
+  }
+
+  .orb-stage {
+    position: relative;
+    width: 320px;
+    height: 320px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Rotating particle ring -- a conic gradient ring, slowly rotating */
+  .orb-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      rgba(103, 232, 249, 0.5) 60deg,
+      transparent 120deg,
+      transparent 180deg,
+      rgba(59, 130, 246, 0.4) 240deg,
+      transparent 300deg,
+      transparent 360deg
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+    animation: ring-rotate 10s linear infinite;
+    opacity: 0.7;
+    transition: opacity 0.4s ease;
+  }
+
+  @keyframes ring-rotate {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .orb {
+    position: relative;
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, var(--cyan-bright), var(--cyan) 40%, var(--blue) 75%, var(--blue-deep) 100%);
+    box-shadow:
+      0 0 40px 6px rgba(34, 211, 238, 0.45),
+      0 0 90px 20px rgba(59, 130, 246, 0.25);
+    transition: box-shadow 0.25s ease, transform 0.08s ease;
+    /* transform/box-shadow are also driven live by JS (setOrbEnergy) for
+       the listening/speaking states -- these CSS values are the resting/
+       idle look, overridden inline while reactive. */
+  }
+
+  /* IDLE: slow gentle breathing, ~4s cycle */
+  .orb.state-idle {
+    animation: orb-breathe 4s ease-in-out infinite;
+  }
+  @keyframes orb-breathe {
+    0%, 100% { transform: scale(1); filter: brightness(1); }
+    50%      { transform: scale(1.045); filter: brightness(1.12); }
+  }
+
+  /* LISTENING: base ripple; real-time amplitude is layered on via JS
+     (see setOrbEnergy), which sets --mic-energy and adjusts scale/glow
+     directly on the element style each animation frame. */
+  .orb.state-listening {
+    animation: orb-listen-ripple 1.6s ease-in-out infinite;
+  }
+  @keyframes orb-listen-ripple {
+    0%, 100% { box-shadow: 0 0 50px 8px rgba(34,211,238,0.55), 0 0 100px 24px rgba(59,130,246,0.3); }
+    50%      { box-shadow: 0 0 70px 14px rgba(34,211,238,0.75), 0 0 130px 32px rgba(59,130,246,0.4); }
+  }
+
+  /* THINKING: cooler, tighter pulsing while waiting on a response */
+  .orb.state-thinking {
+    animation: orb-think 0.9s ease-in-out infinite;
+    background: radial-gradient(circle at 35% 30%, #a78bfa, var(--cyan) 45%, var(--blue) 80%, var(--blue-deep) 100%);
+  }
+  @keyframes orb-think {
+    0%, 100% { transform: scale(0.97); }
+    50%      { transform: scale(1.03); }
+  }
+
+  /* SPEAKING: base state -- real-time pulse is driven by JS via
+     word-boundary timing events from SpeechSynthesisUtterance (see
+     speakText()). Browsers don't expose synthesized-speech audio to
+     AnalyserNode the way a real <audio> element would, so this is a
+     timing-driven approximation, not literal waveform analysis. Swap in
+     true amplitude-driven animation here once a backend TTS endpoint
+     returns actual audio for <audio>+AnalyserNode playback (see
+     ORB REACTIVITY section in the script below for exactly where).
+  */
+  .orb.state-speaking {
+    animation: orb-speak-base 0.5s ease-in-out infinite;
+  }
+  @keyframes orb-speak-base {
+    0%, 100% { filter: brightness(1.05); }
+    50%      { filter: brightness(1.25); }
+  }
+
+  .orb-ring.state-listening { opacity: 1; animation-duration: 4s; }
+  .orb-ring.state-thinking  { opacity: 0.9; animation-duration: 2s; }
+  .orb-ring.state-speaking  { opacity: 1; animation-duration: 3s; }
+
+  .orb-state-label {
+    margin-top: 28px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .orb-transcript-preview {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--cyan-bright);
+    min-height: 18px;
+    max-width: 480px;
+    text-align: center;
+    opacity: 0.85;
+  }
+
+  /* ---- Chat panel (30%) ---- */
+  .chat-panel {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-right: 1px solid var(--graphite-750);
+    border-left: 1px solid var(--panel-border);
+    background: var(--panel-bg);
   }
 
   .messages {
     flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    padding: 18px 16px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
 
-  .msg {
-    max-width: 72%;
-    padding: 11px 14px;
+  .msg-row {
+    display: flex;
+    flex-direction: column;
+    max-width: 92%;
+    animation: msg-fade-in 0.3s ease;
+  }
+  @keyframes msg-fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-row.user { align-self: flex-end; align-items: flex-end; }
+  .msg-row.assistant { align-self: flex-start; align-items: flex-start; }
+
+  .msg-bubble {
+    padding: 10px 13px;
     border-radius: 10px;
-    font-size: 14.5px;
+    font-size: 13.5px;
     line-height: 1.5;
     white-space: pre-wrap;
+    word-break: break-word;
   }
 
-  .msg.user {
-    align-self: flex-end;
-    background: var(--graphite-650);
-    color: var(--parchment-100);
+  .msg-row.user .msg-bubble {
+    background: linear-gradient(135deg, var(--blue-deep), #1e3a8a);
     border-bottom-right-radius: 3px;
   }
 
-  .msg.assistant {
-    align-self: flex-start;
-    background: var(--graphite-850);
-    border: 1px solid var(--graphite-750);
+  .msg-row.assistant .msg-bubble {
+    background: #171b28;
+    border: 1px solid var(--panel-border);
     border-bottom-left-radius: 3px;
   }
 
-  .msg .agent-tag {
-    display: block;
+  .msg-row .agent-tag {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 9.5px;
     letter-spacing: 0.08em;
-    color: var(--amber-500);
+    color: var(--cyan);
     text-transform: uppercase;
-    margin-bottom: 5px;
+    margin-bottom: 4px;
   }
 
-  .msg.system-note {
-    align-self: center;
-    background: transparent;
-    color: var(--slate-500);
+  .msg-timestamp {
     font-family: var(--font-mono);
-    font-size: 11.5px;
-    padding: 2px 0;
+    font-size: 9.5px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    padding: 0 2px;
   }
 
-  /* ---- Thinking indicator ---- */
-  .msg.thinking {
-    align-self: flex-start;
-    background: var(--graphite-850);
-    border: 1px solid var(--graphite-750);
-    border-bottom-left-radius: 3px;
+  .msg-row.system-note {
+    align-self: center;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-align: center;
+    max-width: 100%;
+  }
+
+  .thinking-dots {
     display: flex;
-    align-items: center;
     gap: 4px;
-    padding: 13px 16px;
+    padding: 10px 13px;
+    background: #171b28;
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    border-bottom-left-radius: 3px;
+    align-self: flex-start;
+    width: fit-content;
   }
-
-  .thinking-dot {
-    width: 6px;
-    height: 6px;
+  .thinking-dots span {
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
-    background: var(--slate-400);
-    animation: thinking-bounce 1.2s infinite ease-in-out;
+    background: var(--cyan);
+    animation: dot-bounce 1.2s infinite ease-in-out;
   }
-
-  .thinking-dot:nth-child(2) { animation-delay: 0.15s; }
-  .thinking-dot:nth-child(3) { animation-delay: 0.3s; }
-
-  @keyframes thinking-bounce {
+  .thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
+  .thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes dot-bounce {
     0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
-    30% { transform: translateY(-4px); opacity: 1; }
+    30% { transform: translateY(-3px); opacity: 1; }
   }
 
   /* ---- Confirmation banner ---- */
   .confirm-banner {
-    margin: 0 20px 14px 20px;
-    padding: 12px 14px;
+    margin: 0 16px 12px 16px;
+    padding: 11px 13px;
     border-radius: 8px;
     border: 1px solid var(--risk-500);
-    background: rgba(217, 97, 79, 0.08);
+    background: rgba(224, 100, 90, 0.08);
     display: none;
     flex-direction: column;
-    gap: 10px;
+    gap: 9px;
   }
-
   .confirm-banner.visible { display: flex; }
-
   .confirm-banner .label {
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 9.5px;
     letter-spacing: 0.1em;
     color: var(--risk-300);
     text-transform: uppercase;
   }
-
-  .confirm-banner .prompt-text {
-    font-size: 14px;
-    color: var(--parchment-100);
-  }
-
-  .confirm-actions {
-    display: flex;
-    gap: 8px;
-  }
-
+  .confirm-banner .prompt-text { font-size: 13px; color: var(--text); }
+  .confirm-actions { display: flex; gap: 8px; }
   .confirm-actions button {
     font-family: var(--font-mono);
-    font-size: 12px;
-    letter-spacing: 0.04em;
-    padding: 7px 14px;
+    font-size: 11.5px;
+    padding: 6px 12px;
     border-radius: 6px;
-    border: 1px solid var(--graphite-650);
-    background: var(--graphite-850);
-    color: var(--parchment-100);
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    color: var(--text);
     cursor: pointer;
   }
-
   .confirm-actions button.approve {
     background: var(--risk-500);
     border-color: var(--risk-500);
-    color: var(--graphite-950);
+    color: #0a0a0f;
     font-weight: 600;
   }
-
-  .confirm-actions button:hover { filter: brightness(1.1); }
+  .confirm-actions button:hover { filter: brightness(1.12); }
 
   /* ---- Input bar ---- */
   .input-bar {
     display: flex;
-    gap: 10px;
-    padding: 14px 20px;
-    border-top: 1px solid var(--graphite-750);
-    background: var(--graphite-850);
+    gap: 8px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--panel-border);
   }
 
-  .input-bar input {
+  .input-bar input[type="text"] {
     flex: 1;
-    background: var(--graphite-950);
-    border: 1px solid var(--graphite-650);
-    color: var(--parchment-100);
+    background: var(--bg);
+    border: 1px solid var(--panel-border);
+    color: var(--text);
     border-radius: 8px;
-    padding: 11px 14px;
+    padding: 10px 12px;
     font-family: var(--font-body);
-    font-size: 14px;
+    font-size: 13.5px;
     outline: none;
+    min-width: 0;
+  }
+  .input-bar input[type="text"]:focus { border-color: var(--cyan); }
+
+  .icon-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: var(--bg);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+  }
+  .icon-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+  .icon-btn.mic-active {
+    color: var(--bg);
+    background: var(--cyan);
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px 1px var(--cyan);
   }
 
-  .input-bar input:focus { border-color: var(--amber-500); }
-
-  .input-bar button {
+  .send-btn {
     font-family: var(--font-mono);
-    font-size: 12px;
-    letter-spacing: 0.05em;
-    padding: 0 20px;
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    padding: 0 16px;
     border-radius: 8px;
     border: none;
-    background: var(--amber-500);
-    color: var(--graphite-950);
+    background: linear-gradient(135deg, var(--cyan), var(--blue));
+    color: #061018;
     font-weight: 600;
     cursor: pointer;
+    flex-shrink: 0;
   }
+  .send-btn:hover { filter: brightness(1.1); }
+  .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .input-bar button:hover { background: var(--amber-300); }
-  .input-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-  /* ---- System rail (signature element) ---- */
-  .rail {
+  /* ---- System audit slide-out (kept, but tucked away by default so the
+     70/30 orb/chat layout matches the requested design exactly) ---- */
+  .system-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100%;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--panel-border);
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+    z-index: 20;
     display: flex;
     flex-direction: column;
-    background: var(--graphite-850);
-    min-height: 0;
   }
+  .system-drawer.open { transform: translateX(0); }
 
-  .rail-header {
+  .system-drawer-header {
     padding: 12px 16px;
     font-family: var(--font-mono);
     font-size: 10.5px;
-    letter-spacing: 0.14em;
-    color: var(--slate-400);
-    border-bottom: 1px solid var(--graphite-750);
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--panel-border);
     text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .system-drawer-header button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
   }
 
-  .rail-log {
+  .system-log {
     flex: 1;
     overflow-y: auto;
     padding: 12px 16px;
     font-family: var(--font-mono);
-    font-size: 11.5px;
-    line-height: 1.7;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    font-size: 11px;
+    line-height: 1.6;
   }
-
-  .rail-entry {
-    color: var(--slate-400);
-    padding-bottom: 6px;
-    margin-bottom: 6px;
-    border-bottom: 1px solid var(--graphite-750);
-  }
-
-  .rail-entry:last-child {
-    border-bottom: none;
-  }
-
-  .rail-entry .entry-top {
-    display: flex;
-    gap: 8px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .rail-entry .time { color: var(--slate-500); flex-shrink: 0; }
-  .rail-entry .action { color: var(--parchment-100); overflow: hidden; text-overflow: ellipsis; }
-
-  .rail-entry .entry-bottom {
-    margin-top: 3px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
+  .log-entry { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--panel-border); }
+  .log-entry .time { color: var(--text-muted); }
+  .log-entry .action { color: var(--text); }
   .risk-badge {
     display: inline-block;
-    font-size: 10px;
-    letter-spacing: 0.04em;
-    padding: 1px 7px;
+    font-size: 9.5px;
+    padding: 1px 6px;
     border-radius: 4px;
     text-transform: uppercase;
+    margin-left: 4px;
   }
+  .risk-badge.risk-safe { color: var(--text-muted); background: rgba(124,132,148,0.15); }
+  .risk-badge.risk-sensitive { color: var(--sensitive-500); background: rgba(217,166,72,0.15); }
+  .risk-badge.risk-destructive { color: var(--risk-300); background: rgba(224,100,90,0.18); font-weight: 600; }
 
-  .risk-badge.risk-safe {
-    color: var(--slate-400);
-    background: rgba(138, 144, 156, 0.12);
-  }
-
-  .risk-badge.risk-sensitive {
-    color: var(--sensitive-500);
-    background: rgba(217, 166, 72, 0.14);
-  }
-
-  .risk-badge.risk-destructive {
-    color: var(--risk-300);
-    background: rgba(217, 97, 79, 0.16);
-    font-weight: 600;
-  }
-
-  .entry-bottom .agent-name { color: var(--slate-400); }
-
-  .cursor-line {
-    padding: 10px 16px 14px 16px;
-    font-family: var(--font-mono);
-    color: var(--amber-500);
-    font-size: 13px;
-  }
-
-  .cursor-blink {
-    animation: blink 1.1s step-start infinite;
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
-  }
-
-  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar { width: 7px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--graphite-650); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 4px; }
 </style>
 </head>
 <body>
 <div class="app">
   <div class="header">
     <span class="wordmark">SARVOS</span>
-    <span class="status-dot" title="connected"></span>
-    <span class="tagline">personal ai operating system — phase 1a</span>
+    <span class="status-dot"></span>
+    <span class="tagline">personal ai operating system</span>
+    <div class="header-spacer"></div>
+    <button class="system-toggle" id="systemToggleBtn">System Log</button>
   </div>
 
   <div class="body">
-    <div class="chat-col">
+    <!-- ORB PANEL (70%) -->
+    <div class="orb-panel">
+      <div class="orb-stage">
+        <div class="orb-ring state-idle" id="orbRing"></div>
+        <div class="orb state-idle" id="orb"></div>
+      </div>
+      <div class="orb-state-label" id="orbStateLabel">idle</div>
+      <div class="orb-transcript-preview" id="transcriptPreview"></div>
+    </div>
+
+    <!-- CHAT PANEL (30%) -->
+    <div class="chat-panel">
       <div class="messages" id="messages">
-        <div class="msg system-note">Start a conversation below. Try: "remember that I prefer dark mode", "debug this function", or "delete everything" to see the confirmation flow.</div>
+        <div class="msg-row system-note">Type below, or click the mic to talk. Try "remember that I prefer dark mode" or "delete everything" to see the confirmation flow.</div>
       </div>
 
       <div class="confirm-banner" id="confirmBanner">
-        <span class="label">Confirmation required</span>
+        <span class="label" id="confirmLabel">Confirmation required</span>
         <span class="prompt-text" id="confirmPrompt"></span>
-        <div class="confirm-actions">
+        <div class="confirm-actions" id="confirmActions">
           <button class="approve" id="confirmYes">Proceed</button>
           <button id="confirmNo">Cancel</button>
         </div>
       </div>
 
       <form class="input-bar" id="inputForm">
-        <input type="text" id="messageInput" placeholder="Ask SARVOS to do something..." autocomplete="off" />
-        <button type="submit" id="sendBtn">Send</button>
+        <input type="text" id="messageInput" placeholder="Ask SARVOS, or say &quot;Hey Jarvis&quot;..." autocomplete="off" />
+        <button type="submit" class="send-btn" id="sendBtn">Send</button>
       </form>
     </div>
 
-    <div class="rail">
-      <div class="rail-header">System · Audit Trail</div>
-      <div class="rail-log" id="railLog"></div>
-      <div class="cursor-line"><span class="cursor-blink">▊</span></div>
+    <!-- System audit drawer (hidden by default, toggled via header button) -->
+    <div class="system-drawer" id="systemDrawer">
+      <div class="system-drawer-header">
+        <span>System · Audit Trail</span>
+        <button id="systemCloseBtn">&times;</button>
+      </div>
+      <div class="system-log" id="systemLog"></div>
     </div>
   </div>
 </div>
 
 <script>
+/* =========================================================================
+   BACKEND WIRING
+   Reuses the existing FastAPI endpoints -- nothing about the backend
+   changed for this UI redesign. Swap these fetch calls if you move to a
+   different backend; everything else (orb, chat, voice) is independent
+   of exactly how the response is fetched.
+   ========================================================================= */
+
 const messagesEl = document.getElementById('messages');
-const railLogEl = document.getElementById('railLog');
 const form = document.getElementById('inputForm');
 const input = document.getElementById('messageInput');
 const sendBtn = document.getElementById('sendBtn');
@@ -425,80 +581,58 @@ const confirmBanner = document.getElementById('confirmBanner');
 const confirmPrompt = document.getElementById('confirmPrompt');
 const confirmYes = document.getElementById('confirmYes');
 const confirmNo = document.getElementById('confirmNo');
+const transcriptPreview = document.getElementById('transcriptPreview');
+const systemToggleBtn = document.getElementById('systemToggleBtn');
+const systemDrawer = document.getElementById('systemDrawer');
+const systemCloseBtn = document.getElementById('systemCloseBtn');
+const systemLog = document.getElementById('systemLog');
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function addMessage(role, content, agent) {
-  const div = document.createElement('div');
-  div.className = `msg ${role}`;
+  const row = document.createElement('div');
+  row.className = `msg-row ${role}`;
+
   if (agent && role === 'assistant') {
-    const tag = document.createElement('span');
+    const tag = document.createElement('div');
     tag.className = 'agent-tag';
     tag.textContent = agent;
-    div.appendChild(tag);
+    row.appendChild(tag);
   }
-  const textNode = document.createTextNode(content);
-  div.appendChild(textNode);
-  messagesEl.appendChild(div);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble';
+  bubble.textContent = content;
+  row.appendChild(bubble);
+
+  const ts = document.createElement('div');
+  ts.className = 'msg-timestamp';
+  ts.textContent = formatTime(new Date());
+  row.appendChild(ts);
+
+  messagesEl.appendChild(row);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 let thinkingEl = null;
-
 function showThinking() {
   if (thinkingEl) return;
   thinkingEl = document.createElement('div');
-  thinkingEl.className = 'msg thinking';
-  thinkingEl.innerHTML = '<span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span>';
+  thinkingEl.className = 'thinking-dots';
+  thinkingEl.innerHTML = '<span></span><span></span><span></span>';
   messagesEl.appendChild(thinkingEl);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
-
 function hideThinking() {
-  if (thinkingEl) {
-    thinkingEl.remove();
-    thinkingEl = null;
-  }
-}
-
-function riskClass(risk) {
-  if (risk === 'destructive') return 'risk-destructive';
-  if (risk === 'sensitive') return 'risk-sensitive';
-  return 'risk-safe';
-}
-
-async function refreshLog() {
-  try {
-    const res = await fetch('/api/log?limit=30');
-    const data = await res.json();
-    railLogEl.innerHTML = '';
-    // entries come back newest-first; show oldest-first for a natural read
-    const entries = [...data.entries].reverse();
-    for (const e of entries) {
-      const line = document.createElement('div');
-      line.className = 'rail-entry';
-      const time = (e.timestamp || '').split(' ')[1] || e.timestamp || '';
-      const riskLabel = e.risk || 'safe';
-      line.innerHTML =
-        `<div class="entry-top"><span class="time">${time}</span><span class="action">${e.action}</span></div>` +
-        `<div class="entry-bottom">` +
-          (e.agent ? `<span class="agent-name">${e.agent}</span>` : '') +
-          `<span class="risk-badge ${riskClass(riskLabel)}">${riskLabel}</span>` +
-        `</div>`;
-      railLogEl.appendChild(line);
-    }
-    railLogEl.scrollTop = railLogEl.scrollHeight;
-  } catch (err) {
-    console.error('log refresh failed', err);
-  }
-}
-
-function setBusy(busy) {
-  sendBtn.disabled = busy;
-  input.disabled = busy;
+  if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
 }
 
 async function sendMessage(text) {
   addMessage('user', text);
-  setBusy(true);
+  setOrbState('thinking');
+  sendBtn.disabled = true;
   showThinking();
   try {
     const res = await fetch('/api/chat', {
@@ -512,21 +646,31 @@ async function sendMessage(text) {
   } catch (err) {
     hideThinking();
     addMessage('assistant', `Connection error: ${err}. Is the server running?`);
+    setOrbState('idle');
   } finally {
-    setBusy(false);
+    sendBtn.disabled = false;
     refreshLog();
   }
 }
 
 function handleResponse(data) {
   if (data.status === 'needs_confirmation') {
+    setConfirmBannerMode('interactive');
     confirmPrompt.textContent = data.prompt;
     confirmBanner.classList.add('visible');
+    setOrbState('idle');
     return;
   }
   confirmBanner.classList.remove('visible');
+  const outputs = (data.messages || []).map(m => m.output);
   for (const m of (data.messages || [])) {
     addMessage('assistant', m.output, m.agent);
+  }
+  // Speak the response and drive the orb's speaking animation from it.
+  if (outputs.length) {
+    speakText(outputs.join(' '));
+  } else {
+    setOrbState('idle');
   }
 }
 
@@ -540,7 +684,8 @@ form.addEventListener('submit', (e) => {
 
 confirmYes.addEventListener('click', async () => {
   confirmBanner.classList.remove('visible');
-  setBusy(true);
+  setOrbState('thinking');
+  sendBtn.disabled = true;
   showThinking();
   try {
     const res = await fetch('/api/confirm', {
@@ -550,18 +695,16 @@ confirmYes.addEventListener('click', async () => {
     });
     hideThinking();
     handleResponse(await res.json());
-  } catch (err) {
-    hideThinking();
-    addMessage('assistant', `Connection error: ${err}.`);
   } finally {
-    setBusy(false);
+    sendBtn.disabled = false;
     refreshLog();
   }
 });
 
 confirmNo.addEventListener('click', async () => {
   confirmBanner.classList.remove('visible');
-  setBusy(true);
+  setOrbState('thinking');
+  sendBtn.disabled = true;
   try {
     const res = await fetch('/api/confirm', {
       method: 'POST',
@@ -570,13 +713,224 @@ confirmNo.addEventListener('click', async () => {
     });
     handleResponse(await res.json());
   } finally {
-    setBusy(false);
+    sendBtn.disabled = false;
     refreshLog();
   }
 });
 
+async function refreshLog() {
+  try {
+    const res = await fetch('/api/log?limit=30');
+    const data = await res.json();
+    systemLog.innerHTML = '';
+    const entries = [...data.entries].reverse();
+    for (const e of entries) {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+      const time = (e.timestamp || '').split(' ')[1] || e.timestamp || '';
+      const risk = e.risk || 'safe';
+      div.innerHTML = `<span class="time">${time}</span> <span class="action">${e.action}</span> ${e.agent || ''}` +
+        `<span class="risk-badge risk-${risk}">${risk}</span>`;
+      systemLog.appendChild(div);
+    }
+  } catch (err) { console.error('log refresh failed', err); }
+}
+
+systemToggleBtn.addEventListener('click', () => {
+  systemDrawer.classList.add('open');
+  refreshLog();
+});
+systemCloseBtn.addEventListener('click', () => systemDrawer.classList.remove('open'));
+
 refreshLog();
-setInterval(refreshLog, 5000);
+setInterval(refreshLog, 8000);
+
+/* =========================================================================
+   ORB STATE MACHINE
+   States: idle | listening | thinking | speaking
+   Just toggles CSS classes -- the actual reactive animation (real mic
+   amplitude for listening, word-boundary timing for speaking) is layered
+   on top via direct style updates in the mic-analysis and TTS sections
+   below.
+   ========================================================================= */
+
+const orb = document.getElementById('orb');
+const orbRing = document.getElementById('orbRing');
+const orbStateLabel = document.getElementById('orbStateLabel');
+
+let currentOrbState = 'idle';
+
+function setOrbState(newState) {
+  currentOrbState = newState;
+  orb.className = `orb state-${newState}`;
+  orbRing.className = `orb-ring state-${newState}`;
+  orbStateLabel.textContent = newState;
+  if (newState !== 'listening' && newState !== 'speaking') {
+    // Reset any inline reactive styles left over from mic/TTS drive.
+    orb.style.transform = '';
+    orb.style.boxShadow = '';
+  }
+}
+
+/* =========================================================================
+   TEXT-TO-SPEECH FOR TYPED MESSAGES (browser SpeechSynthesis API).
+   Independent of the wake-word voice pipeline below, which does its own
+   TTS server-side (Python pyttsx3) and drives the orb via WebSocket
+   events instead. This function only fires for responses to messages
+   you TYPED, so the two paths never overlap or double-speak.
+
+   HONEST LIMITATION: browsers do not expose SpeechSynthesis's audio
+   output to the Web Audio API's AnalyserNode -- there is no standard way
+   to get a real waveform/amplitude reading from `window.speechSynthesis`.
+   The pulse below is driven by `onboundary` events (real timing, per
+   word, just not real amplitude) rather than literal audio analysis.
+   ========================================================================= */
+
+function speakText(text) {
+  if (!window.speechSynthesis) {
+    setOrbState('idle');
+    return;
+  }
+  setOrbState('speaking');
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1.0;
+
+  utterance.onboundary = () => {
+    orb.style.transform = 'scale(1.06)';
+    orb.style.filter = 'brightness(1.3)';
+    clearTimeout(speakText._decayTimer);
+    speakText._decayTimer = setTimeout(() => {
+      orb.style.transform = 'scale(1)';
+      orb.style.filter = 'brightness(1)';
+    }, 120);
+  };
+
+  utterance.onend = () => {
+    orb.style.transform = '';
+    orb.style.filter = '';
+    setOrbState('idle');
+  };
+
+  utterance.onerror = () => {
+    setOrbState('idle');
+  };
+
+  window.speechSynthesis.speak(utterance);
+}
+
+/* =========================================================================
+   WAKE-WORD VOICE INTEGRATION (WebSocket)
+   Replaces the earlier click-to-talk (Web Speech API) approach entirely,
+   per explicit choice. The actual wake-word detection, speech-to-text,
+   and text-to-speech all happen SERVER-SIDE in Python (voice/assistant.py
+   -- openWakeWord + faster-whisper + pyttsx3, the same pipeline already
+   built and tested via `python -m voice.assistant`). This browser code's
+   only job is to reflect that pipeline's live state visually: connect to
+   /ws/voice-events, and drive the exact same orb state machine + chat
+   panel already used for typed messages.
+
+   Say "Hey Jarvis" (the wake-word pipeline's trigger phrase -- see
+   voice/config.py for why it isn't literally "Hey SARVOS") to start a
+   voice turn; no button click needed or available for voice input.
+   ========================================================================= */
+
+const confirmLabel = document.getElementById('confirmLabel');
+const confirmActions = document.getElementById('confirmActions');
+
+function setConfirmBannerMode(mode) {
+  // 'interactive' = typed-message confirmation, clickable Proceed/Cancel
+  // (unchanged REST-based flow via /api/chat + /api/confirm above).
+  // 'voice' = the voice pipeline is waiting for a SPOKEN yes/no --
+  // buttons are hidden since clicking them wouldn't resolve the voice
+  // pipeline's own separate pending-confirmation state (see
+  // voice/assistant.py's _pending_task, tracked independently per
+  // interface -- a known, documented scope limit, not a bug).
+  if (mode === 'voice') {
+    confirmActions.style.display = 'none';
+    confirmLabel.textContent = 'Confirmation required (say "yes" or "no")';
+  } else {
+    confirmActions.style.display = 'flex';
+    confirmLabel.textContent = 'Confirmation required';
+  }
+}
+
+function connectVoiceEvents() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${protocol}//${location.host}/ws/voice-events`);
+
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    handleVoiceEvent(data);
+  };
+
+  ws.onclose = () => {
+    // Reconnect after a short delay -- the server may not be up yet on
+    // first page load, or the voice pipeline/connection may drop.
+    setTimeout(connectVoiceEvents, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function handleVoiceEvent(data) {
+  switch (data.type) {
+    case 'wake_detected':
+      // Brief acknowledgement that "Hey Jarvis" was heard, before the
+      // sustained 'listening' state (below) takes over.
+      setOrbState('listening');
+      break;
+
+    case 'listening':
+      setOrbState('listening');
+      transcriptPreview.textContent = 'Listening...';
+      break;
+
+    case 'transcript':
+      transcriptPreview.textContent = '';
+      addMessage('user', data.text);
+      break;
+
+    case 'thinking':
+      setOrbState('thinking');
+      showThinking();
+      break;
+
+    case 'response':
+      hideThinking();
+      confirmBanner.classList.remove('visible');
+      addMessage('assistant', data.text, 'voice');
+      break;
+
+    case 'confirmation_required':
+      hideThinking();
+      setConfirmBannerMode('voice');
+      confirmPrompt.textContent = data.prompt;
+      confirmBanner.classList.add('visible');
+      break;
+
+    case 'speaking_start':
+      setOrbState('speaking');
+      break;
+
+    case 'speaking_end':
+      setOrbState('idle');
+      transcriptPreview.textContent = '';
+      break;
+
+    case 'speaking_interrupted':
+      // Next 'listening' event (the conversation loop's next iteration)
+      // will update the orb; nothing extra needed here.
+      break;
+
+    case 'idle':
+      setOrbState('idle');
+      transcriptPreview.textContent = '';
+      break;
+  }
+}
+
+connectVoiceEvents();
+
 </script>
 </body>
 </html>

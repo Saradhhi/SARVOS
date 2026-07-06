@@ -23,6 +23,7 @@ environments.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -86,6 +87,76 @@ def _should_stop_recording(
         return state.chunks_seen >= max_wait_for_speech_chunks
 
     return False
+
+
+class ContinuousMicMonitor:
+    """Runs a background thread continuously sampling the microphone and
+    tracking the most recent RMS energy reading, so a caller can check
+    "is the person talking RIGHT NOW" at any moment -- this is what makes
+    real mid-speech interruption possible (checking only between
+    sentences, the earlier approach, isn't true barge-in).
+
+    IMPORTANT -- same class of bug as WakeWordDetector's stream-contention
+    issue (found and fixed earlier in this project): this class opens its
+    own microphone InputStream, which must NOT be open at the same time as
+    another one (the wake-word detector's stream, or record_utterance's).
+    Always call stop() -- which fully closes the stream, not just signals
+    an intent to stop -- before starting any other microphone access.
+
+    Uses a HIGHER RMS threshold than normal speech detection (see
+    config.BARGE_IN_RMS_THRESHOLD) specifically to reduce false triggers
+    from SARVOS hearing its own voice -- there's no acoustic echo
+    cancellation in this build. This reduces, but does not eliminate,
+    self-interruption; a headset (mic physically separated from the
+    speaker output) remains the reliable fix if false interruptions are
+    still frequent.
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = config.SAMPLE_RATE,
+        chunk_duration_s: float = 0.1,
+    ):
+        self.sample_rate = sample_rate
+        self.chunk_samples = int(sample_rate * chunk_duration_s)
+        self._current_rms = 0.0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            with sd.InputStream(
+                samplerate=self.sample_rate, channels=1, dtype="float32",
+                blocksize=self.chunk_samples,
+            ) as stream:
+                while not self._stop_event.is_set():
+                    chunk, _overflowed = stream.read(self.chunk_samples)
+                    rms = float(np.sqrt(np.mean(np.square(chunk.flatten()))))
+                    with self._lock:
+                        self._current_rms = rms
+        except Exception as e:
+            print(f"[audio] Continuous mic monitor stopped: {e}")
+
+    def stop(self) -> None:
+        """Fully stops AND closes the microphone stream -- always call
+        this before any other code tries to open the microphone again."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+            self._thread = None
+
+    def current_rms(self) -> float:
+        with self._lock:
+            return self._current_rms
+
+    def is_loud_enough(self, threshold: float) -> bool:
+        return self.current_rms() > threshold
 
 
 def record_utterance(

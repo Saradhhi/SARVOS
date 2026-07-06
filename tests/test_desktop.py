@@ -35,10 +35,13 @@ def isolated_db():
 
     Reloading both modules after setting the env var forces a fresh
     MemoryEngine/Orchestrator bound to THIS test's temp path, closing that
-    gap instead of relying on import order.
+    gap instead of relying on import order. Also disables the voice
+    pipeline -- not needed for these tests, and avoids unnecessary
+    background-thread noise.
     """
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["SARVOS_DB_PATH"] = os.path.join(tmp, "test_desktop.db")
+        os.environ["SARVOS_DISABLE_VOICE_PIPELINE"] = "1"
         import api.server
         importlib.reload(api.server)
         import desktop as desktop_module
@@ -54,17 +57,24 @@ def test_port_is_open_false_when_nothing_listening():
 
 
 def test_server_becomes_reachable_and_serves_real_api():
-    """Starts the actual background server thread desktop.py uses, waits
-    for _port_is_open to confirm readiness the same way main() does, then
-    hits a real endpoint to confirm it's not just a listening socket but
-    the actual FastAPI app responding correctly."""
-    test_port = 8321
-    original_port = desktop.PORT
-    desktop.PORT = test_port
-    try:
-        thread = threading.Thread(target=desktop._run_server, daemon=True)
-        thread.start()
+    """Starts a REAL, controllable uvicorn.Server (desktop._build_server())
+    the same way desktop.py's main() does, waits for _port_is_open to
+    confirm readiness, hits a real endpoint to confirm it's not just a
+    listening socket but the actual FastAPI app responding correctly --
+    and then shuts the server down CLEANLY via should_exit, so FastAPI's
+    lifespan shutdown actually fires (properly cancelling the broadcast
+    task) instead of abandoning the server on a daemon thread forever.
 
+    That abandonment was the real, if cosmetic, source of a "Task was
+    destroyed but it is pending!" warning at the end of the whole test
+    session -- fixed by giving this test a way to shut down what it
+    started, not just leave it running."""
+    test_port = 8321
+    server = desktop._build_server(host=desktop.HOST, port=test_port)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    try:
         deadline = time.time() + 10
         while time.time() < deadline:
             if desktop._port_is_open(desktop.HOST, test_port):
@@ -82,4 +92,5 @@ def test_server_becomes_reachable_and_serves_real_api():
         body = resp.json()
         assert body["status"] == "ok"
     finally:
-        desktop.PORT = original_port
+        server.should_exit = True
+        thread.join(timeout=5)
