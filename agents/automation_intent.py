@@ -30,6 +30,8 @@ class Operation(str, Enum):
     LIST_DIR = "list_dir"
     WRITE_FILE = "write_file"
     DELETE_FILE = "delete_file"
+    MOVE_FILE = "move_file"
+    COPY_FILE = "copy_file"
     GIT_COMMAND = "git_command"
     UNKNOWN = "unknown"
 
@@ -40,6 +42,7 @@ class AutomationIntent:
     risk: RiskLevel
     # Operation-specific parameters, all optional depending on operation:
     path: str | None = None
+    dest_path: str | None = None  # for move/copy
     content: str | None = None
     git_args: list[str] | None = None
     raw_instruction: str = ""
@@ -63,6 +66,10 @@ _WRITE_FILE_RE = re.compile(
     re.I,
 )
 _DELETE_FILE_RE = re.compile(r"^delete\s+(?:the\s+)?file\s+(.+)$", re.I)
+_MOVE_FILE_RE = re.compile(
+    r"^(?:move|rename)\s+(?:the\s+)?file\s+(\S+)\s+to\s+(\S+)$", re.I
+)
+_COPY_FILE_RE = re.compile(r"^copy\s+(?:the\s+)?file\s+(\S+)\s+to\s+(\S+)$", re.I)
 _GIT_RE = re.compile(r"^git\s+(\S+)(?:\s+(.*))?$", re.I)
 
 
@@ -113,6 +120,29 @@ def classify(instruction: str) -> AutomationIntent:
         return AutomationIntent(
             operation=Operation.DELETE_FILE, risk=RiskLevel.DESTRUCTIVE,
             path=match.group(1).strip(), raw_instruction=instruction,
+        )
+
+    match = _MOVE_FILE_RE.match(text)
+    if match:
+        # DESTRUCTIVE: the source file is removed from its original
+        # location, and (checked at execution time, not here -- classify()
+        # deliberately does no filesystem access) an existing file at the
+        # destination would be overwritten if allowed to proceed silently.
+        return AutomationIntent(
+            operation=Operation.MOVE_FILE, risk=RiskLevel.DESTRUCTIVE,
+            path=match.group(1).strip(), dest_path=match.group(2).strip(),
+            raw_instruction=instruction,
+        )
+
+    match = _COPY_FILE_RE.match(text)
+    if match:
+        # SENSITIVE, not DESTRUCTIVE: unlike move, the source file is left
+        # intact -- worst case if something goes wrong is an unwanted
+        # extra file, not data loss of the original.
+        return AutomationIntent(
+            operation=Operation.COPY_FILE, risk=RiskLevel.SENSITIVE,
+            path=match.group(1).strip(), dest_path=match.group(2).strip(),
+            raw_instruction=instruction,
         )
 
     match = _WRITE_FILE_RE.match(text)

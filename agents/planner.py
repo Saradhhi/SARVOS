@@ -16,7 +16,8 @@ from __future__ import annotations
 
 from core.schemas import AgentName, AgentResult, RiskLevel, Task
 from agents.base import BaseAgent
-from agents.automation_intent import classify as classify_automation, Operation
+from agents.automation_intent import classify as classify_automation, Operation as AutomationOp
+from agents.browser_intent import classify as classify_browser, Operation as BrowserOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
@@ -37,14 +38,12 @@ class PlannerAgent(BaseAgent):
         )
 
     def _decompose(self, task: Task) -> list[Task]:
-        # Automation gets first refusal: its classifier is precise about
-        # WHICH file/git operation this is and how risky it specifically
-        # is (e.g. "git status" vs "git push"), which the generic keyword
-        # matching below can't distinguish. Anything the automation
-        # classifier doesn't recognize falls through to the older,
-        # coarser routing untouched.
+        # Automation and Browser each get first refusal via their own
+        # precise classifiers, before falling through to the generic
+        # keyword matching below. Automation checked first since "read
+        # file X" and "open website X" are unambiguous and don't overlap.
         automation_intent = classify_automation(task.instruction)
-        if automation_intent.operation != Operation.UNKNOWN:
+        if automation_intent.operation != AutomationOp.UNKNOWN:
             return [
                 Task(
                     parent_request_id=task.parent_request_id,
@@ -52,6 +51,18 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=automation_intent.risk,
+                )
+            ]
+
+        browser_intent = classify_browser(task.instruction)
+        if browser_intent.operation != BrowserOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.BROWSER,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=browser_intent.risk,
                 )
             ]
 

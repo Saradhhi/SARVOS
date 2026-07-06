@@ -31,6 +31,7 @@ Safety boundaries, layered:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -101,6 +102,10 @@ class AutomationAgent(BaseAgent):
                 return self._write_file(task, intent.path, intent.content)
             if intent.operation == Operation.DELETE_FILE:
                 return self._delete_file(task, intent.path)
+            if intent.operation == Operation.MOVE_FILE:
+                return self._move_file(task, intent.path, intent.dest_path)
+            if intent.operation == Operation.COPY_FILE:
+                return self._copy_file(task, intent.path, intent.dest_path)
             if intent.operation == Operation.GIT_COMMAND:
                 return self._run_git(task, intent.git_args)
         except PathSafetyError as e:
@@ -115,7 +120,8 @@ class AutomationAgent(BaseAgent):
                 f"I couldn't work out a specific file or git action from: "
                 f"'{task.instruction}'. Try phrasing like 'read file "
                 f"notes.txt', 'list files in projects', 'write a file "
-                f"called todo.txt with buy milk', or 'git status'."
+                f"called todo.txt with buy milk', 'move the file a.txt to "
+                f"b.txt', 'copy the file a.txt to backup.txt', or 'git status'."
             ),
         )
 
@@ -182,6 +188,65 @@ class AutomationAgent(BaseAgent):
             task_id=task.task_id, agent=self.name, success=True,
             output=f"Deleted '{path}'.",
             data={"path": str(target)},
+        )
+
+    def _move_file(self, task: Task, path: str, dest_path: str) -> AgentResult:
+        source = resolve_safe_path(path)
+        dest = resolve_safe_path(dest_path)
+
+        if not source.exists():
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=f"'{path}' doesn't exist in the workspace.",
+            )
+        # Overwrite protection: refuse rather than silently clobber,
+        # regardless of risk tier already having been confirmed. The
+        # confirmation the user gave was for "move this file", not
+        # "move this file AND destroy whatever's already at the
+        # destination" -- those are different amounts of consent.
+        if dest.exists():
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=(
+                    f"'{dest_path}' already exists. Delete it first or "
+                    f"choose a different destination name."
+                ),
+                error="destination_exists",
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(dest))
+        return AgentResult(
+            task_id=task.task_id, agent=self.name, success=True,
+            output=f"Moved '{path}' to '{dest_path}'.",
+            data={"source": str(source), "dest": str(dest)},
+        )
+
+    def _copy_file(self, task: Task, path: str, dest_path: str) -> AgentResult:
+        source = resolve_safe_path(path)
+        dest = resolve_safe_path(dest_path)
+
+        if not source.exists():
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=f"'{path}' doesn't exist in the workspace.",
+            )
+        if dest.exists():
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=(
+                    f"'{dest_path}' already exists. Delete it first or "
+                    f"choose a different destination name."
+                ),
+                error="destination_exists",
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(source), str(dest))
+        return AgentResult(
+            task_id=task.task_id, agent=self.name, success=True,
+            output=f"Copied '{path}' to '{dest_path}'.",
+            data={"source": str(source), "dest": str(dest)},
         )
 
     # ---- Git (allowlisted subcommands only) --------------------------------

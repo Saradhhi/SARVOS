@@ -104,6 +104,70 @@ def test_path_traversal_attempt_is_refused_not_executed(agent):
     assert result.error == "path_safety"
 
 
+# ---- Move / copy -------------------------------------------------------
+
+def test_move_file_real_effect(agent, workspace):
+    agent.handle(_task("write a file called draft.txt with hello"))
+    result = agent.handle(_task("move the file draft.txt to archive.txt"))
+    assert result.success
+    assert not (workspace / "draft.txt").exists()
+    assert (workspace / "archive.txt").read_text() == "hello"
+
+
+def test_rename_is_same_as_move(agent, workspace):
+    agent.handle(_task("write a file called old.txt with content"))
+    result = agent.handle(_task("rename the file old.txt to new.txt"))
+    assert result.success
+    assert not (workspace / "old.txt").exists()
+    assert (workspace / "new.txt").exists()
+
+
+def test_copy_file_leaves_source_intact(agent, workspace):
+    agent.handle(_task("write a file called source.txt with important data"))
+    result = agent.handle(_task("copy the file source.txt to backup.txt"))
+    assert result.success
+    assert (workspace / "source.txt").read_text() == "important data"
+    assert (workspace / "backup.txt").read_text() == "important data"
+
+
+def test_move_refuses_to_overwrite_existing_destination(agent, workspace):
+    """Overwrite protection: even though 'move' was already confirmed as
+    DESTRUCTIVE by the user, that consent covered moving the file, not
+    silently destroying whatever's already at the destination -- a
+    different, un-consented-to loss of data."""
+    agent.handle(_task("write a file called source.txt with new content"))
+    agent.handle(_task("write a file called dest.txt with original content"))
+
+    result = agent.handle(_task("move the file source.txt to dest.txt"))
+    assert not result.success
+    assert result.error == "destination_exists"
+    # BOTH files must be untouched -- the move must not have partially happened.
+    assert (workspace / "source.txt").read_text() == "new content"
+    assert (workspace / "dest.txt").read_text() == "original content"
+
+
+def test_copy_refuses_to_overwrite_existing_destination(agent, workspace):
+    agent.handle(_task("write a file called source.txt with new content"))
+    agent.handle(_task("write a file called dest.txt with original content"))
+
+    result = agent.handle(_task("copy the file source.txt to dest.txt"))
+    assert not result.success
+    assert result.error == "destination_exists"
+    assert (workspace / "dest.txt").read_text() == "original content"
+
+
+def test_move_nonexistent_source_fails_gracefully(agent):
+    result = agent.handle(_task("move the file ghost.txt to somewhere.txt"))
+    assert not result.success
+    assert "doesn't exist" in result.output
+
+
+def test_copy_nonexistent_source_fails_gracefully(agent):
+    result = agent.handle(_task("copy the file ghost.txt to somewhere.txt"))
+    assert not result.success
+    assert "doesn't exist" in result.output
+
+
 # ---- Git commands (real subprocess, against a real temp git repo) ----------
 
 @pytest.fixture

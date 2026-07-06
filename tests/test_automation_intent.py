@@ -74,6 +74,29 @@ def test_unrecognized_git_subcommand_is_treated_as_destructive():
     assert intent.risk == RiskLevel.DESTRUCTIVE
 
 
+def test_move_file_is_destructive():
+    intent = classify("move the file draft.txt to archive.txt")
+    assert intent.operation == Operation.MOVE_FILE
+    assert intent.risk == RiskLevel.DESTRUCTIVE
+    assert intent.path == "draft.txt"
+    assert intent.dest_path == "archive.txt"
+
+
+def test_rename_file_uses_move_operation():
+    intent = classify("rename the file old.txt to new.txt")
+    assert intent.operation == Operation.MOVE_FILE
+    assert intent.path == "old.txt"
+    assert intent.dest_path == "new.txt"
+
+
+def test_copy_file_is_sensitive():
+    intent = classify("copy the file source.txt to backup.txt")
+    assert intent.operation == Operation.COPY_FILE
+    assert intent.risk == RiskLevel.SENSITIVE
+    assert intent.path == "source.txt"
+    assert intent.dest_path == "backup.txt"
+
+
 def test_unrelated_instruction_is_unknown():
     intent = classify("what's the weather today")
     assert intent.operation == Operation.UNKNOWN

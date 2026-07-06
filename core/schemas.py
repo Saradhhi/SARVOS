@@ -41,6 +41,7 @@ class AgentName(str, Enum):
     CODING = "coding"
     MEMORY = "memory"
     AUTOMATION = "automation"
+    BROWSER = "browser"
     GENERAL = "general"
 
 
