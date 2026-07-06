@@ -18,6 +18,7 @@ from agents.planner import PlannerAgent
 from agents.coding import CodingAgent
 from agents.memory_agent import MemoryAgent
 from agents.general import GeneralAgent
+from agents.automation import AutomationAgent
 
 
 def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
@@ -27,5 +28,6 @@ def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
         AgentName.CODING: CodingAgent(memory),
         AgentName.MEMORY: MemoryAgent(memory),
         AgentName.GENERAL: GeneralAgent(memory),
+        AgentName.AUTOMATION: AutomationAgent(memory),
     }
     return Orchestrator(memory, agents)

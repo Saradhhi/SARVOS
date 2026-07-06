@@ -98,6 +98,74 @@ delete all my files        <- triggers a confirmation prompt (y/n)
 log                          <- shows the audit trail
 ```
 
+## Automation (real file operations + git, sandboxed)
+
+The first agent in this build with REAL effects, not just generated text.
+Available from CLI, web UI, desktop app, and voice — all four share the
+same orchestrator via `core/factory.py`.
+
+**Try it:**
+```
+write a file called todo.txt with buy milk and eggs
+read file todo.txt
+list the files in .
+delete the file todo.txt        <- triggers the confirmation flow, for real this time
+git status
+git log
+```
+
+**Safety model, layered:**
+1. **Sandboxed workspace.** All file read/write/list/delete operations are
+   resolved against `SARVOS_WORKSPACE_ROOT` (default: `./sarvos_workspace`,
+   NOT your home directory or Desktop) and REFUSED if the resolved path
+   would escape it — blocks both `../../etc/passwd`-style traversal and
+   absolute paths pointing elsewhere. Enforced at path-resolution time,
+   not just hoped for from instruction parsing.
+2. **Git allowlist.** Only specific subcommands can run at all:
+   `status`/`log`/`diff`/`branch`/`show`/`remote` (safe), `add`/`commit`/
+   `fetch`/`stash` (sensitive), `push`/`pull`/`checkout`/`reset`/`merge`/
+   `rebase` (destructive). Anything else is refused outright — this is an
+   allowlist, not a denylist. Checked twice: once by the Planner (for risk
+   classification) and again by the agent itself right before executing
+   (defense in depth).
+3. **The same confirmation gate as everything else.** SENSITIVE/DESTRUCTIVE
+   operations go through the orchestrator's central confirmation check
+   before this agent ever runs — verified end-to-end
+   (`tests/test_automation_e2e.py`): a destructive delete request raises
+   `PendingConfirmation`, the file is confirmed NOT deleted yet, and only
+   after explicit approval does it actually disappear. Rejecting leaves
+   it untouched. This is the fix for the "I've cleared your history"
+   problem from earlier testing — that was a text response with nothing
+   behind it; this has real effects, gated the same way.
+4. **Size/timeout caps**: file reads over `SARVOS_MAX_FILE_SIZE_BYTES`
+   (default 1MB) are refused; git commands timeout after
+   `SARVOS_GIT_TIMEOUT_SECONDS` (default 15s) rather than hanging forever.
+
+**Deliberately NOT an LLM freely deciding what shell commands to run** —
+that would be a serious, hard-to-bound risk for a feature with real
+filesystem/subprocess effects. Every operation is explicit, enumerated,
+and matched via deterministic pattern parsing
+(`agents/automation_intent.py`). Doesn't match a known pattern? SARVOS
+says so and suggests valid phrasing, rather than guessing.
+
+**A real bug caught during testing, worth knowing about:** the path-safety
+function originally took `workspace_root` as a default parameter bound to
+`WORKSPACE_ROOT` at import time. Monkeypatching that value in tests
+silently did nothing — Python evaluates default arguments once, at
+function definition — so every file operation was quietly running against
+the real default directory instead of the test's temp workspace, and a
+stray `sarvos_workspace/` folder with real files in it was the physical
+evidence. Fixed by looking up the config value dynamically at call time
+instead of via a stale default. Worth knowing if you extend this code:
+reference `automation_config.SOMETHING` at the point of use, not as an
+imported bare name or default parameter.
+
+**Not yet built**: browser automation, IDE integration, and a general
+workflow engine — each a substantial separate project (browser automation
+alone needs Playwright plus real page-state handling). This automation
+agent is the foundation those would eventually call into, not a
+replacement for building them.
+
 ## Run the tests
 
 ```bash
@@ -105,14 +173,15 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-41 tests, all passing (verified stable across repeated runs, including
-threading/timing-sensitive server-startup tests, and real — not mocked —
-inference against the openWakeWord library): episodic memory, semantic
-recall, confirmation gating, LLM graceful degradation, the web API's
-request/response contract, the desktop app's server-readiness logic, the
-voice assistant's conversation/confirmation logic, and wake-word model
-loading (including a real bug caught and fixed by actually running the
-model instead of assuming the API).
+94 tests, all passing: episodic memory, semantic recall, confirmation
+gating, LLM graceful degradation, the web API's request/response contract,
+the desktop app's server-readiness logic, the voice assistant's
+conversation/confirmation logic, wake-word model loading, audio
+silence-detection decision logic, sentence splitting, Whisper hallucination
+filtering, and — new — real file operations, path-safety enforcement, and
+real git subprocess calls for the Automation agent, including an
+end-to-end test proving the confirmation gate actually blocks/allows a
+REAL filesystem effect, not just a simulated one.
 
 ## What's actually real here (updated)
 
@@ -217,6 +286,11 @@ agents/
   coding.py          Coding agent (real LLM via Ollama, graceful fallback)
   general.py         General conversational agent (real LLM via Ollama)
   memory_agent.py    Memory agent (remember/recall/forget)
+  automation.py      REAL file ops + git, sandboxed (first agent with
+                      actual side effects, not just generated text)
+  automation_intent.py  Shared intent classification (Planner + agent
+                          agree on what an instruction means and its risk)
+  automation_config.py  Workspace sandbox root, size/timeout limits
 memory/
   store.py           SQLite persistence (episodic, semantic, procedural, audit)
   engine.py          MemoryEngine facade + TF-IDF SemanticIndex

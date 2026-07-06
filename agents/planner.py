@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from core.schemas import AgentName, AgentResult, RiskLevel, Task
 from agents.base import BaseAgent
+from agents.automation_intent import classify as classify_automation, Operation
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
@@ -36,6 +37,24 @@ class PlannerAgent(BaseAgent):
         )
 
     def _decompose(self, task: Task) -> list[Task]:
+        # Automation gets first refusal: its classifier is precise about
+        # WHICH file/git operation this is and how risky it specifically
+        # is (e.g. "git status" vs "git push"), which the generic keyword
+        # matching below can't distinguish. Anything the automation
+        # classifier doesn't recognize falls through to the older,
+        # coarser routing untouched.
+        automation_intent = classify_automation(task.instruction)
+        if automation_intent.operation != Operation.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.AUTOMATION,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=automation_intent.risk,
+                )
+            ]
+
         text = task.instruction.lower()
 
         # Destructive-intent detection runs FIRST and independently of which

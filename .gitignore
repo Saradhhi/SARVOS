@@ -10,3 +10,4 @@ test.db
 .env
 *.env
 .env.*
+sarvos_workspace/
