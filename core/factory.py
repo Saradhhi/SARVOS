@@ -20,6 +20,7 @@ from agents.memory_agent import MemoryAgent
 from agents.general import GeneralAgent
 from agents.automation import AutomationAgent
 from agents.browser import BrowserAgent
+from agents.research import ResearchAgent
 
 
 def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
@@ -31,5 +32,6 @@ def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
         AgentName.GENERAL: GeneralAgent(memory),
         AgentName.AUTOMATION: AutomationAgent(memory),
         AgentName.BROWSER: BrowserAgent(memory),
+        AgentName.RESEARCH: ResearchAgent(memory),
     }
     return Orchestrator(memory, agents)

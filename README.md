@@ -197,14 +197,80 @@ for the test suite) with real Playwright navigation, a real screenshot
 file written and verified non-empty, and confirmed live against actual
 external sites (github.com) during manual testing.
 
+## Research agent (real web search)
+
+```
+research the history of the internet
+search for the best sourdough bread recipe
+look up quantum computing basics
+find information about climate change
+```
+
+The third real-capability agent (after Automation and Browser), built to
+prove the agent protocol generalizes cleanly to a new capability rather
+than being special-cased for the first two -- `agents/research_intent.py`
+for deterministic instruction classification (shared with the Planner,
+same as automation/browser).
+
+**This one went through two real pivots before landing somewhere
+sustainable, each driven by actual live-testing feedback, not guessed in
+advance:**
+
+1. **First version**: Playwright navigating DuckDuckGo's unofficial,
+   no-JS HTML results page (`html.duckduckgo.com`), matching
+   BrowserAgent's pattern. Worked against a local test fixture. A live
+   query on a real machine got DuckDuckGo's generic error page with zero
+   results -- no crash, just silently rejected.
+2. **Second version**: swapped Playwright for plain `requests` +
+   BeautifulSoup against the same HTML endpoint, based on current external
+   documentation suggesting a full browser was the problem (DuckDuckGo's
+   bot detection includes TLS fingerprinting a headless browser can't
+   easily disguise). A live query this time returned **HTTP 202** with a
+   generic DuckDuckGo homepage -- still rejected, just differently.
+3. **Final version, current**: further research turned up the real
+   answer -- `html.duckduckgo.com` is DuckDuckGo's **unofficial** results
+   page, explicitly against their terms, and they **actively resist**
+   automated access to it (their own documented behavior: "expect 202,
+   403, and similar errors"). Continuing to reverse-engineer around that
+   felt like the wrong thing to keep doing, not just a hard bug to fix.
+   This agent now uses DuckDuckGo's **one real, sanctioned, documented
+   API** instead: the Instant Answer API (`api.duckduckgo.com`,
+   `format=json`) -- free, no key, actually meant for this.
+
+**The real, honest tradeoff of the final approach**: the Instant Answer
+API is NOT a ranked web-search results page. It returns curated content
+(topic abstracts, definitions, disambiguation, related topics) for
+well-known entities and concepts. Many completely reasonable
+queries -- general questions, current events, long-tail topics -- will
+come back with **nothing at all**. That's a real, inherent coverage gap,
+not a bug, and the agent says so plainly when it happens (with a link to
+run the same query directly on duckduckgo.com) rather than pretending to
+have searched the whole web. This is the honest cost of using a free,
+no-key, ToS-respecting API instead of a paid search API or continuing to
+fight a service's bot detection.
+
+**Honest limitation on testing, unchanged through all three versions**:
+this sandbox's network is blocked from reaching any DuckDuckGo domain at
+all, confirmed directly against both `html.duckduckgo.com` and
+`api.duckduckgo.com` (identical "Host not in allowlist" result for each).
+So the live API call itself still needs verification on a machine with
+real internet access. What WAS verified: real parsing logic against
+DuckDuckGo's actual documented JSON schema (`AbstractText`,
+`AbstractSource`, `AbstractURL`, `Definition`, `Answer`, `RelatedTopics`
+with `Text`/`FirstURL`) using a fake response object standing in for the
+network call, real error handling (connection failures, invalid JSON),
+and a real end-to-end CLI run confirming Planner -> ResearchAgent routing
+works correctly.
+
 ## Run the tests
+
 
 ```bash
 pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-154 tests, all passing: episodic memory, semantic recall, confirmation
+173 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
@@ -516,6 +582,9 @@ agents/
   browser.py         Real Playwright browser automation (read-only)
   browser_intent.py  Browser instruction classification + scheme safety
   browser_config.py  Screenshot sandbox, timeouts, headless default
+  research.py        Real Playwright web search (DuckDuckGo HTML endpoint)
+  research_intent.py Research instruction classification
+  research_config.py Search URL template, result limits, timeouts
 memory/
   store.py           SQLite persistence (episodic, semantic, procedural, audit)
   engine.py          MemoryEngine facade + TF-IDF SemanticIndex

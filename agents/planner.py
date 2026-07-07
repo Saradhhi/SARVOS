@@ -18,6 +18,7 @@ from core.schemas import AgentName, AgentResult, RiskLevel, Task
 from agents.base import BaseAgent
 from agents.automation_intent import classify as classify_automation, Operation as AutomationOp
 from agents.browser_intent import classify as classify_browser, Operation as BrowserOp
+from agents.research_intent import classify as classify_research, Operation as ResearchOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
@@ -76,6 +77,18 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=browser_intent.risk,
+                )
+            ]
+
+        research_intent = classify_research(task.instruction)
+        if research_intent.operation != ResearchOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.RESEARCH,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=research_intent.risk,
                 )
             ]
 
