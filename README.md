@@ -204,7 +204,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-141 tests, all passing: episodic memory, semantic recall, confirmation
+154 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
@@ -253,6 +253,27 @@ delivery, tested via FastAPI's TestClient).
   replacing `PlannerAgent._decompose`; the Task/AgentResult contract
   doesn't change. (Coding and General agents are no longer stubbed — see
   above.)
+
+## Real cross-platform bug: conversation order could reverse on Windows
+
+Found from a real test failure that never once reproduced in the Linux
+sandbox this project was built in: `recent_history()` ordered turns by
+their `timestamp` string, but turns created in a tight loop with no delay
+(exactly what happened in the test) could get **identical timestamps on
+Windows** — its clock resolution is coarser than Linux's. SQLite's
+tie-breaking for equal values isn't guaranteed to match insertion order,
+so history could come back reversed.
+
+Fixed by ordering by SQLite's implicit `rowid` instead (strictly
+increases with insertion order, completely immune to clock resolution) —
+applied to both `turns` (episodic memory) and `memory_records` (semantic
+memory), the latter fixed proactively once the pattern was understood,
+before it had actually caused a visible failure. Verified with a test
+that *forces* identical timestamps deterministically (rather than
+depending on real clock timing to happen to trigger the bug) — confirmed
+this test genuinely catches the issue by temporarily reverting the fix
+and watching it fail with the exact reversed-order symptom from the real
+report.
 
 ## Known limitation: semantic search is lexical, not semantic
 
@@ -359,6 +380,22 @@ Earlier versions only checked for interruption *between* sentences. This
 now checks continuously, in real time, while SARVOS is actually talking —
 genuine barge-in, not just a gap-in-the-pauses approximation.
 
+**Saying "stop" to actually stop**: interrupting a response and then
+speaking a real follow-up question always worked, but there was no way
+to just say "stop" or "never mind" and have SARVOS actually go quiet —
+it would sit there waiting for a follow-up question that was never
+coming. Now, if your very next utterance (after an interruption, or any
+time there's no pending confirmation) is one of a recognized set of stop
+phrases — "stop," "never mind," "cancel," "that's enough," "quiet," and
+close variants — SARVOS goes idle immediately instead of treating it as
+a real request. This is a whole-utterance match, not a substring check:
+a genuine question like "how do I stop a car" is never mistaken for a
+cancel command just because it contains the word "stop" (see
+`tests/test_stop_command.py`'s negative-case tests). Note "stop" was
+already a valid way to say "no" to an existing confirmation prompt —
+that behavior is unchanged; the new check only applies when nothing is
+currently pending confirmation.
+
 **How**: `voice/tts.py`'s `speak_interruptible()` runs TTS on a background
 thread while `voice/audio_io.py`'s `ContinuousMicMonitor` samples the
 microphone in a loop on another thread; the moment your volume crosses
@@ -387,20 +424,36 @@ down instantly after `engine.stop()`, and starting a second engine's
 shutdown. Worse, that crash **killed the entire background voice
 pipeline thread** — "Hey Jarvis" stopped responding at all afterward,
 which looked exactly like "stuck," not "crashed," from the outside, since
-typed chat kept working fine (different code path). Two fixes, both now
+typed chat kept working fine (different code path). Two fixes, both
 tested:
-1. **Root cause**: `TextToSpeech` now holds a lock across the *entire*
-   duration of every speak call, including a full (non-timeout) thread
-   join — so a new engine can never start while a previous one (even an
-   interrupted one) hasn't *completely* finished. The original code used
-   a 2-second timeout on the join, which could return before the engine
-   had truly finished, letting the next call race ahead into the crash.
+1. **Root cause**: `TextToSpeech` holds a lock across the *entire*
+   duration of every speak call — so a new engine can never start while a
+   previous one (even an interrupted one) hasn't finished. The original
+   code used a 2-second timeout on the join, which could return before
+   the engine had truly finished, letting the next call race ahead into
+   the crash.
 2. **Defense in depth**: both the per-turn conversation logic
    (`voice/assistant.py`) and the wake-word listen loop itself
-   (`voice/wake_word.py`) now catch exceptions locally — a failure in one
+   (`voice/wake_word.py`) catch exceptions locally — a failure in one
    turn logs an error and returns to wake-word-only listening, rather
-   than propagating up and ending the entire pipeline. One bad turn
-   should never require restarting the whole app again.
+   than propagating up and ending the entire pipeline.
+
+**A SECOND real bug, found from the first fix itself, during further live
+testing**: fixing #1 with an *unconditional* (infinite) `join()` traded
+the crash for something worse — a permanent hang. If `engine.stop()`
+doesn't actually unblock `runAndWait()` promptly (it doesn't always,
+especially for longer responses), that join waits forever, freezing the
+entire voice pipeline thread with **no crash, no traceback, just
+silence** — interruption felt instant (stop() was called), then total
+unresponsiveness afterward, exactly as reported. Fixed by bounding the
+wait (`SARVOS_TTS_TEARDOWN_TIMEOUT_SECONDS`, default 3s): if the engine
+hasn't finished tearing down by then, log a warning and move on anyway,
+accepting a small residual chance the original crash recurs — which now
+degrades gracefully via the defense-in-depth handling above instead of
+freezing everything again. Verified with a test using a deliberately
+"stubborn" fake engine whose `stop()` does nothing: `speak_interruptible`
+now returns in ~0.3s instead of hanging for its simulated 10-second
+run time.
 
 ## More natural, less robotic responses
 

@@ -38,13 +38,23 @@ class TextToSpeech:
         # (SAPI5 on Windows) doesn't always finish tearing down instantly
         # after engine.stop() -- if a SECOND engine's runAndWait() starts
         # too soon after an interrupted first one, pyttsx3's shared
-        # internal state collides and raises. A timeout-based join (what
-        # this used before) can return before the first engine has truly
-        # finished, letting the next call race ahead into exactly that
-        # collision. Holding this lock for the ENTIRE call, including a
-        # full (non-timeout) join, guarantees the next speak call can't
-        # start until the previous one is completely done -- not just
-        # "probably done by now."
+        # internal state collides and raises.
+        #
+        # The join after interruption is BOUNDED (see
+        # config.TTS_TEARDOWN_TIMEOUT_SECONDS in speak_interruptible), not
+        # unconditional -- an earlier version used a timeout-less join,
+        # which caused a DIFFERENT real bug found from live testing: if
+        # engine.stop() doesn't promptly unblock runAndWait() (it doesn't
+        # always, especially for longer text), that join blocked the
+        # entire voice pipeline thread forever, with no crash or error at
+        # all -- just silence, since there's only one background thread
+        # doing wake-word detection, listening, and speaking. Bounded
+        # waiting plus the defense-in-depth exception handling in
+        # voice/assistant.py and voice/wake_word.py is the actual fix:
+        # wait reasonably long for a clean finish, then move on rather
+        # than risk hanging forever, accepting a small residual chance of
+        # the original crash recurring -- which now degrades gracefully
+        # instead of freezing everything.
         self._speak_lock = threading.Lock()
         try:
             import pyttsx3
@@ -123,13 +133,37 @@ class TextToSpeech:
                     break
                 threading.Event().wait(poll_interval)
 
-            # Full join, no timeout: block until the thread has ACTUALLY
-            # finished (whether it finished naturally or was stopped),
-            # not just "probably finished by now." This is the actual fix
-            # -- releasing the lock only once this is genuinely true means
-            # the next speak call can never race ahead into the previous
-            # engine's still-in-progress teardown.
-            speech_thread.join()
+            # Bounded wait, NOT an unconditional join(). A real hang was
+            # found from live testing: pyttsx3's engine.stop() doesn't
+            # always promptly unblock runAndWait() on Windows (especially
+            # for longer text) -- an earlier version of this code used a
+            # timeout-less join() here, which then blocked the ENTIRE
+            # voice pipeline thread forever when that happened. Since
+            # there's only one background thread doing wake-word
+            # detection, listening, AND speaking, that one hang froze
+            # "Hey Jarvis" completely, with no crash/traceback at all --
+            # just silence, which is exactly what was reported.
+            #
+            # config.TTS_TEARDOWN_TIMEOUT_SECONDS bounds how long we'll
+            # wait for a clean finish before giving up and moving on
+            # anyway. The (rare) tradeoff: if the engine truly hasn't
+            # finished by then and a new speak call starts immediately
+            # after, the original "run loop already started" crash could
+            # recur -- but that's now caught by the defense-in-depth
+            # exception handling added to voice/assistant.py and
+            # voice/wake_word.py, so even in that rare case it degrades to
+            # "one turn failed, recovering" rather than freezing the
+            # whole pipeline again. Bounded-but-imperfect beats infinite.
+            speech_thread.join(timeout=config.TTS_TEARDOWN_TIMEOUT_SECONDS)
+            if speech_thread.is_alive():
+                print(
+                    f"[voice/tts] Warning: TTS engine didn't finish "
+                    f"tearing down within "
+                    f"{config.TTS_TEARDOWN_TIMEOUT_SECONDS}s after being "
+                    f"stopped -- proceeding anyway rather than hanging "
+                    f"forever. The abandoned thread will keep running "
+                    f"harmlessly in the background."
+                )
             try:
                 engine.stop()
             except Exception:

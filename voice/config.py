@@ -70,6 +70,16 @@ BARGE_IN_RMS_THRESHOLD = float(os.environ.get("SARVOS_BARGE_IN_RMS_THRESHOLD", "
 
 TTS_RATE_WORDS_PER_MINUTE = int(os.environ.get("SARVOS_TTS_RATE", "175"))
 
+# How long to wait for a TTS engine to finish tearing down after being
+# interrupted, before giving up and moving on anyway. Found necessary from
+# a real hang during live testing: pyttsx3's engine.stop() doesn't always
+# promptly unblock runAndWait() on Windows, especially for longer text --
+# an unconditional (infinite) wait here previously froze the entire voice
+# pipeline thread permanently, with no crash or error, just silence.
+TTS_TEARDOWN_TIMEOUT_SECONDS = float(
+    os.environ.get("SARVOS_TTS_TEARDOWN_TIMEOUT_SECONDS", "3")
+)
+
 # Brief pause after TTS finishes speaking before the mic starts listening
 # again, to let any trailing audio-device buffer drain. Without a headset
 # (no echo cancellation), listening again the instant speak() returns risks

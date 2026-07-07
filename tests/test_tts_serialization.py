@@ -51,6 +51,23 @@ class _FakeEngine:
         self.stopped = True
 
 
+class _StubbornFakeEngine(_FakeEngine):
+    """Simulates the REAL bug found in live testing: engine.stop() is
+    called, but runAndWait() doesn't actually unblock -- exactly the
+    documented pyttsx3-on-Windows unreliability (especially with longer
+    text) that caused the whole voice pipeline to hang forever when the
+    previous fix used an unconditional join()."""
+
+    def stop(self):
+        self.stopped = False  # deliberately does NOT stop anything
+
+    def runAndWait(self):
+        # Ignores self.stopped entirely -- runs for the full duration
+        # regardless of how many times stop() is called, simulating an
+        # engine that just won't quit.
+        time.sleep(self.run_duration)
+
+
 @pytest.fixture
 def fake_pyttsx3(monkeypatch):
     fake_module = types.SimpleNamespace(init=lambda: _FakeEngine())
@@ -141,3 +158,51 @@ def test_speak_and_speak_interruptible_share_the_same_lock(tts):
 
     thread.join(timeout=2)
     assert order == ["speak-start", "speak-end"]
+
+
+def test_bounded_wait_prevents_infinite_hang_when_stop_does_not_work(monkeypatch):
+    """THE critical regression test for a real bug found in live testing:
+    interrupting a longer response froze the entire voice pipeline
+    permanently, with no crash or error -- just silence. Root cause: an
+    earlier version used an unconditional (timeout-less) join() after
+    calling engine.stop(), and pyttsx3's engine.stop() doesn't always
+    actually unblock runAndWait() on Windows (especially for longer
+    text). That join then waited forever.
+
+    This test uses a deliberately "stubborn" fake engine whose stop()
+    does nothing, and verifies speak_interruptible returns within a
+    bounded time regardless -- proving the fix actually prevents the
+    hang, rather than just asserting the timeout config value exists."""
+    from voice import config as voice_config
+
+    monkeypatch.setattr(voice_config, "TTS_TEARDOWN_TIMEOUT_SECONDS", 0.3)
+
+    fake_module = types.SimpleNamespace(
+        init=lambda: _StubbornFakeEngine(run_duration=10.0)  # would hang ~10s if unbounded
+    )
+    monkeypatch.setitem(sys.modules, "pyttsx3", fake_module)
+
+    tts = TextToSpeech()
+    tts._available = True
+
+    call_count = {"n": 0}
+
+    def interrupt_immediately():
+        call_count["n"] += 1
+        return call_count["n"] >= 1  # interrupt on the very first check
+
+    start = time.time()
+    result = tts.speak_interruptible(
+        "a long response that would normally take 10 seconds",
+        stop_check=interrupt_immediately,
+        poll_interval=0.02,
+    )
+    elapsed = time.time() - start
+
+    assert result is True  # correctly reports it was interrupted
+    assert elapsed < 2.0, (
+        f"speak_interruptible took {elapsed:.2f}s -- should have given up "
+        f"around the 0.3s bounded timeout, not waited anywhere close to "
+        f"the engine's full 10s run_duration. If this fails, the hang bug "
+        f"has regressed."
+    )

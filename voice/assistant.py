@@ -37,6 +37,28 @@ from core.schemas import Task
 YES_WORDS = {"yes", "yeah", "yep", "yup", "proceed", "confirm", "go ahead", "do it"}
 NO_WORDS = {"no", "nope", "cancel", "stop", "don't", "do not"}
 
+# Recognized as a request to go quiet/idle immediately, rather than being
+# treated as a real question -- checked against the WHOLE utterance (see
+# is_stop_command below), not as a substring, so a genuine question like
+# "how do I stop a car" is never mistaken for a cancel command just
+# because it contains the word "stop".
+STOP_PHRASES = {
+    "stop", "stop it", "never mind", "nevermind", "cancel", "cancel that",
+    "that's enough", "that is enough", "quiet", "be quiet", "forget it",
+    "nothing", "nothing else", "nothing more",
+}
+
+
+def is_stop_command(text: str) -> bool:
+    """True if text is (very close to) one of the recognized stop
+    phrases in its entirety -- deliberately NOT a substring check. Found
+    necessary from real use: interrupting a response and then continuing
+    with a real follow-up question worked fine, but there was no way to
+    just say 'stop' or 'never mind' and have SARVOS actually go quiet
+    instead of waiting for a follow-up question that was never coming."""
+    cleaned = text.strip().lower().rstrip(".!?")
+    return cleaned in STOP_PHRASES
+
 
 class VoiceAssistant:
     def __init__(
@@ -181,6 +203,22 @@ class VoiceAssistant:
 
                 print(f"you (voice)> {text}")
                 self._emit("transcript", text=text)
+
+                # Checked BEFORE handle_utterance, and only when nothing is
+                # pending confirmation -- "stop" is ALSO a valid "no" answer
+                # to an existing confirmation (handle_utterance's own
+                # NO_WORDS handling), and that must keep working exactly as
+                # before. This is a separate, new behavior: saying "stop"
+                # or "never mind" with no pending confirmation now ends the
+                # conversation immediately instead of waiting for a
+                # follow-up question that was never coming -- found
+                # missing from real use (interrupting a response worked,
+                # but there was no way to just say "stop" and have it
+                # actually go quiet).
+                if self._pending_task is None and is_stop_command(text):
+                    print("[stop command recognized -- going idle]")
+                    self._emit("idle")
+                    return
 
                 try:
                     self._emit("thinking")

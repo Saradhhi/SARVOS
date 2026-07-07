@@ -98,7 +98,22 @@ class Store:
     def recent_turns(self, limit: int = 20) -> list[ConversationTurn]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM turns ORDER BY timestamp DESC LIMIT ?", (limit,)
+                # Ordered by SQLite's implicit rowid, NOT the timestamp
+                # column. rowid strictly increases with insertion order
+                # and is completely immune to clock resolution -- ordering
+                # by timestamp instead caused a real, platform-specific
+                # bug: turns created in a tight loop with no delay got
+                # IDENTICAL timestamp strings on Windows (whose clock
+                # resolution is coarser than Linux's), and SQLite's
+                # tie-breaking for equal values isn't guaranteed to match
+                # insertion order -- confirmed by a real test failure that
+                # never once reproduced in the Linux sandbox this project
+                # was built in. audit_log already avoided this by using a
+                # real INTEGER PRIMARY KEY AUTOINCREMENT and ordering by
+                # that; this applies the same fix here via rowid, since
+                # turn_id is a TEXT primary key (SQLite still maintains an
+                # implicit auto-incrementing rowid alongside it).
+                "SELECT * FROM turns ORDER BY rowid DESC LIMIT ?", (limit,)
             ).fetchall()
         turns = [_row_to_turn(r) for r in rows]
         return list(reversed(turns))
@@ -124,7 +139,14 @@ class Store:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM memory_records WHERE deleted = 0 "
-                "ORDER BY created_at ASC"
+                # Ordered by rowid (insertion order), not the created_at
+                # timestamp string -- same fix as recent_turns() above,
+                # applied here proactively since this has the identical
+                # tie-breaking vulnerability (multiple records created in
+                # rapid succession can get identical timestamps on
+                # platforms with coarser clock resolution, e.g. Windows
+                # vs. Linux).
+                "ORDER BY rowid ASC"
             ).fetchall()
         return [_row_to_record(r) for r in rows]
 
