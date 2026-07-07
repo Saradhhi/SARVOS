@@ -1,0 +1,9 @@
+{
+  "agent_name": "AutoDeveloper",
+  "version": "1.0.0",
+  "allowed_workspace_path": "./workspace",
+  "test_command": "pytest ./workspace/tests",
+  "deploy_command": "echo Deploying artifact to environment...",
+  "monitoring_interval_secs": 10,
+  "telemetry_log_path": "./workspace/logs/runtime.log"
+}

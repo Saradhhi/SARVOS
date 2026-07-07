@@ -197,6 +197,81 @@ for the test suite) with real Playwright navigation, a real screenshot
 file written and verified non-empty, and confirmed live against actual
 external sites (github.com) during manual testing.
 
+## Terminal agent (real diagnostics, not shell execution)
+
+```
+show me the running processes
+whoami
+what's my hostname
+what os version am I running
+```
+
+Deliberately NOT "run any command the user describes" — arbitrary shell
+execution driven by natural language is a fundamentally different risk
+category than every other agent's allowlist here (there's no realistic
+way to allowlist "anything a user might phrase as a command"). Instead,
+this covers a fixed, small set of real diagnostics, each backed by a
+direct Python library call (`psutil`, `getpass`, `socket`, `platform`)
+rather than a subprocess shell-out — strictly safer AND more reliable/
+cross-platform than parsing `tasklist`/`whoami`/`hostname`/`ver` output
+would be.
+
+## AutoDeveloper agent (reviewed and rebuilt from an external integration)
+
+```
+analyze the workspace
+run the tests
+deploy the project
+```
+
+This one has a real story worth documenting honestly. An external
+integration was proposed that connected a separate "AutoDeveloper" tool
+into SARVOS. On review, it had two genuine, serious problems, not just
+rough edges:
+
+1. **The confirmation prompt didn't actually gate anything.** The
+   proposed wrapper called `wrapper.execute(task)` — which ran the real
+   pipeline (subprocess test execution, file writes) — *before* returning
+   a "[GATED] ... Awaiting user verification [y/n]" string. That string
+   was just text handed to the Coding agent to talk about; typing "y"
+   afterward didn't resume anything, because the action had already
+   happened. This is the opposite of how confirmation gating works
+   everywhere else in SARVOS (see `core/orchestrator.py`'s central
+   DESTRUCTIVE check, which runs *before* any agent's `handle()` is ever
+   called).
+2. **Weak path safety.** File read/write used
+   `safe_path.startswith(os.path.abspath(workspace))` — a sibling
+   directory like `workspace_evil/` also satisfies that string check
+   without being inside `workspace/` at all. `agents/automation.py`'s
+   `resolve_safe_path()` avoids exactly this bug via proper
+   parent-directory membership, not string-prefix matching.
+3. Also present: routing on a bare `if 'develop' in text.lower()`
+   substring check, which would misfire on completely ordinary sentences
+   ("let's develop this idea further"); and an automatic "self-healing"
+   loop that called a hardcoded stub (`simulate_llm_patch`, not a real
+   patch generator) and wrote its fake output directly to a test file,
+   automatically, before any confirmation at all.
+
+**Rebuilt properly**, matching every other agent's pattern:
+- `agents/autodeveloper_intent.py`: specific phrase patterns, not
+  substring matching — covered by an explicit negative-case test using
+  the exact sentences that would have broken the original routing.
+- `RUN_TESTS` and `DEPLOY` are both `DESTRUCTIVE`, gated by the
+  orchestrator's real, central confirmation check *before* this agent's
+  `handle()` ever runs for those operations — verified with an actual
+  end-to-end test through the real orchestrator: a deploy command that
+  creates a marker file is confirmed to **not have run yet** at the
+  point `PendingConfirmation` is raised, and only runs after explicit
+  approval (`tests/test_autodeveloper_agent.py::test_deploy_command_never_runs_before_confirmation`).
+- File/path safety fixed by using the same tested `resolve_safe_path()`
+  already used by `agents/automation.py` — no user-supplied paths are
+  accepted anywhere in this agent at all; every operation works against
+  a fixed, admin-configured workspace root instead.
+- The automatic fake-patch-writing loop was **not** carried over. A real
+  auto-heal feature (wired to Ollama, showing you the actual proposed
+  diff before writing) would be a legitimate future addition, built and
+  tested on its own — not something to keep as a stub, gated or not.
+
 ## System info agent (real CPU/RAM/disk/battery/network stats)
 
 ```
@@ -292,7 +367,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-196 tests, all passing: episodic memory, semantic recall, confirmation
+230 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio

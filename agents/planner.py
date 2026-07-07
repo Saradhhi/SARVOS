@@ -20,6 +20,8 @@ from agents.automation_intent import classify as classify_automation, Operation 
 from agents.browser_intent import classify as classify_browser, Operation as BrowserOp
 from agents.research_intent import classify as classify_research, Operation as ResearchOp
 from agents.system_info_intent import classify as classify_system_info, Operation as SystemInfoOp
+from agents.terminal_intent import classify as classify_terminal, Operation as TerminalOp
+from agents.autodeveloper_intent import classify as classify_autodeveloper, Operation as AutoDeveloperOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
@@ -102,6 +104,30 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=system_info_intent.risk,
+                )
+            ]
+
+        terminal_intent = classify_terminal(task.instruction)
+        if terminal_intent.operation != TerminalOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.TERMINAL,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=terminal_intent.risk,
+                )
+            ]
+
+        autodeveloper_intent = classify_autodeveloper(task.instruction)
+        if autodeveloper_intent.operation != AutoDeveloperOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.AUTODEVELOPER,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=autodeveloper_intent.risk,
                 )
             ]
 
