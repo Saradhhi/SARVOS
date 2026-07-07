@@ -197,6 +197,28 @@ for the test suite) with real Playwright navigation, a real screenshot
 file written and verified non-empty, and confirmed live against actual
 external sites (github.com) during manual testing.
 
+## System info agent (real CPU/RAM/disk/battery/network stats)
+
+```
+system info
+check my cpu
+how much ram do I have
+check my disk usage
+check my battery
+what's my network status
+```
+
+The fourth real-capability agent (after Automation, Browser, Research),
+and the simplest to make fully real and fully tested: entirely read-only
+(every operation is SAFE, no confirmation gating at all), no network
+dependency, works identically in any environment. Uses `psutil` for real
+CPU/RAM/disk/battery/network queries.
+
+Handles the no-battery case honestly rather than assuming a laptop: this
+was built and tested in a headless Linux container with no battery at
+all, and correctly reports "No battery detected -- this looks like a
+desktop system" rather than erroring or faking a number.
+
 ## Research agent (real web search)
 
 ```
@@ -270,7 +292,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-173 tests, all passing: episodic memory, semantic recall, confirmation
+196 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio

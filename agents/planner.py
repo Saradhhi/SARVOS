@@ -19,6 +19,7 @@ from agents.base import BaseAgent
 from agents.automation_intent import classify as classify_automation, Operation as AutomationOp
 from agents.browser_intent import classify as classify_browser, Operation as BrowserOp
 from agents.research_intent import classify as classify_research, Operation as ResearchOp
+from agents.system_info_intent import classify as classify_system_info, Operation as SystemInfoOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
 CODE_KEYWORDS = ("code", "function", "bug", "debug", "refactor", "script", "class ")
@@ -89,6 +90,18 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=research_intent.risk,
+                )
+            ]
+
+        system_info_intent = classify_system_info(task.instruction)
+        if system_info_intent.operation != SystemInfoOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.SYSTEM_INFO,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=system_info_intent.risk,
                 )
             ]
 
