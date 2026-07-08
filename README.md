@@ -197,6 +197,93 @@ for the test suite) with real Playwright navigation, a real screenshot
 file written and verified non-empty, and confirmed live against actual
 external sites (github.com) during manual testing.
 
+## Computer control agent (screenshot, clipboard, volume, power state)
+
+```
+take a screenshot
+read the clipboard
+copy 'hello world' to the clipboard
+mute / unmute / turn the volume up / set the volume to 50%
+increase the brightness / set the brightness to 30%
+lock my computer
+launch notepad
+close the application notepad
+shut down my computer / restart my computer / put my computer to sleep
+```
+
+**Scope decision, same reasoning as Terminal**: no keyboard/mouse
+simulation or hotkey automation. "Simulate any keystroke or click" is an
+unbounded capability — fundamentally different from every allowlisted
+action elsewhere in this project, since it could type or click *anything,
+in any application*. Window resize/move/minimize and screen/mic recording
+are also deferred — real, separate pieces of work.
+
+**Risk tiers**: screenshot, clipboard, and locking are `SAFE` (fully
+reversible, no data-loss risk). Volume, brightness, and launching an app
+are `SENSITIVE` (real effects, easily undone). Closing an app, shutdown,
+restart, and sleep are `DESTRUCTIVE` — gated by the same central
+confirmation check as everything else, verified end-to-end the same way
+as AutoDeveloper's deploy command: a monkeypatched shutdown call is
+confirmed to **not execute** at the moment `PendingConfirmation` is
+raised, and only runs after explicit approval
+(`tests/test_computer_control_agent.py::test_shutdown_never_executes_before_confirmation`).
+
+**A real safety bug found and fixed during testing, not hypothesized in
+advance**: `close_app` matches running processes by a case-insensitive
+substring against their name. The very first test for this used
+`sys.executable`'s name ("python3") as the target — and since the test
+suite itself runs *as* a `python3` process, that call matched and
+terminated the **pytest runner's own process**, hanging the test run
+entirely. Fixed by excluding SARVOS's own process ID from ever being
+matched, regardless of how generic the requested name is — a real
+protection against SARVOS accidentally terminating itself, not just a
+test-only fix. Matching was also extended to check each process's full
+command line, not just its bare name — lets a request target one
+specific process precisely instead of every process sharing a generic
+interpreter name, and made the test itself safer (a unique marker string
+can't collide with anything else genuinely running on the machine).
+
+**A serious near-miss, found from real Windows testing, fixed
+immediately**: a test (`test_shutdown_not_supported_on_non_windows`)
+assumed it would only ever run in a non-Windows sandbox and therefore
+never reach real execution. Run on an actual Windows machine, it fell
+straight through to a **real, unmocked `shutdown /s /t 0` call** — the
+machine only failed to actually shut down because the screen happened to
+be locked at that exact moment (Windows refuses a remote/API shutdown
+while locked without a force flag), not because of any protection in the
+code. That was luck, not safety. Fixed two ways: (1) the test itself is
+now properly platform-conditional, skipped entirely on Windows rather
+than assuming the platform; (2) a permanent defense-in-depth guard was
+added directly to `_execute_system_command` — it refuses to proceed if
+`PYTEST_CURRENT_TEST` (an environment variable pytest sets for the
+duration of every test) is set, so a future test that forgets to mock
+this method fails loudly and safely instead of silently attempting a
+real, irreversible system command.
+
+**Real cross-platform test bugs found from the same Windows run**: `lock`
+and `brightness` were asserted to always fail in tests (written and
+verified only in this sandbox's headless Linux environment) — but on a
+real Windows laptop with a real display, both genuinely work,
+correctly, as designed. The tests wrongly assumed failure; fixed to
+accept whichever outcome is actually true for the machine running them.
+Separately, `launch`/`close` tests originally used the Unix `sleep`
+command, which doesn't exist on Windows at all (a real
+`FileNotFoundError` on the actual test run) — fixed to use
+`sys.executable`, which works identically on both platforms.
+
+**Honest limitations, verified directly rather than assumed**: this was
+built and tested in a headless Linux container with no display, no
+clipboard mechanism, and no Windows COM interfaces at all. Screenshot,
+clipboard, brightness, and volume all correctly report a clear failure
+here rather than crashing (the same graceful-degradation pattern as
+System Info's no-battery handling) — genuine real-world use of these on
+a real Windows desktop, with a real screen and real audio device, needs
+verification on that actual hardware. `pycaw` (Windows volume control)
+is only installed on Windows at all (`sys_platform == 'win32'` in
+`requirements.txt`) since its own internals fail to *import* on Linux
+(`ctypes.HRESULT` doesn't exist outside Windows) — confirmed directly,
+not assumed.
+
 ## Terminal agent (real diagnostics, not shell execution)
 
 ```
@@ -367,7 +454,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-230 tests, all passing: episodic memory, semantic recall, confirmation
+269 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio

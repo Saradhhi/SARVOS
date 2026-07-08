@@ -21,6 +21,7 @@ from agents.browser_intent import classify as classify_browser, Operation as Bro
 from agents.research_intent import classify as classify_research, Operation as ResearchOp
 from agents.system_info_intent import classify as classify_system_info, Operation as SystemInfoOp
 from agents.terminal_intent import classify as classify_terminal, Operation as TerminalOp
+from agents.computer_control_intent import classify as classify_computer_control, Operation as ComputerControlOp
 from agents.autodeveloper_intent import classify as classify_autodeveloper, Operation as AutoDeveloperOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
@@ -116,6 +117,18 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=terminal_intent.risk,
+                )
+            ]
+
+        computer_control_intent = classify_computer_control(task.instruction)
+        if computer_control_intent.operation != ComputerControlOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.COMPUTER_CONTROL,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=computer_control_intent.risk,
                 )
             ]
 
