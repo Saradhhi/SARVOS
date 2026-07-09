@@ -29,7 +29,10 @@ thing.
 
 from __future__ import annotations
 
+import os
+
 from agents import browser_config
+from agents.automation import resolve_safe_path
 from agents.base import BaseAgent
 from agents.interactive_browser_intent import Operation, classify
 from core.schemas import AgentName, AgentResult, Task
@@ -84,6 +87,8 @@ class InteractiveBrowserAgent(BaseAgent):
         handlers = {
             Operation.OPEN: self._open,
             Operation.TYPE: self._type,
+            Operation.UPLOAD: self._upload,
+            Operation.PREVIEW: self._preview,
             Operation.CLICK: self._click,
             Operation.READ: self._read,
             Operation.SUBMIT: self._submit,
@@ -191,21 +196,207 @@ class InteractiveBrowserAgent(BaseAgent):
                 error="type_failed",
             )
 
-    def _find_clickable(self, description: str):
+    def _upload(self, task: Task, intent) -> AgentResult:
+        """SENSITIVE. Attaches a file to a form field.
+
+        Files are restricted to browser_config.UPLOAD_DIR, resolved with the
+        same parent-membership check as file automation. Handing a local file
+        to a remote website is a data-exfiltration path: without this,
+        "upload ../../.ssh/id_rsa to the resume field" would work exactly as
+        asked. Nothing is transmitted until submit -- this only attaches.
+        """
+        guard = self._require_session(task)
+        if guard:
+            return guard
+
+        try:
+            path = resolve_safe_path(intent.text_arg, workspace_root=browser_config.UPLOAD_DIR)
+        except Exception as e:
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=(
+                    f"Refusing to upload '{intent.text_arg}': {e}. Files must "
+                    f"be inside {browser_config.UPLOAD_DIR}."
+                ),
+                error="unsafe_upload_path",
+            )
+
+        if not path.is_file():
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=f"'{intent.text_arg}' isn't in {browser_config.UPLOAD_DIR}.",
+                error="upload_file_not_found",
+            )
+
+        try:
+            page = self.session.page
+            if intent.field_arg:
+                target = self._find_file_input(intent.field_arg)
+            else:
+                target = None
+                loc = page.locator("input[type='file']")
+                if loc.count() > 0:
+                    target = loc.first
+
+            if target is None:
+                return AgentResult(
+                    task_id=task.task_id, agent=self.name, success=False,
+                    output=(
+                        f"Couldn't find a file-upload field"
+                        + (f" matching '{intent.field_arg}'" if intent.field_arg else "")
+                        + " on this page. Try 'read the page' to see what's there."
+                    ),
+                    error="upload_field_not_found",
+                )
+
+            target.set_input_files(str(path))
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=True,
+                output=f"Attached '{path.name}'. Nothing is sent until you submit.",
+                data={"file": path.name},
+            )
+        except Exception as e:
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=f"Couldn't attach '{intent.text_arg}': {e}",
+                error="upload_failed",
+            )
+
+    def _find_file_input(self, description: str):
         page = self.session.page
         desc = description.strip()
-        candidates = [
-            lambda: page.get_by_role("button", name=desc),
-            lambda: page.get_by_role("link", name=desc),
-            lambda: page.get_by_text(desc, exact=False),
-            lambda: page.locator(f"button:has-text('{desc}')"),
-            lambda: page.locator(f"[aria-label='{desc}']"),
-        ]
-        for make in candidates:
+        for make in (
+            lambda: page.get_by_label(desc, exact=False),
+            lambda: page.locator(f"input[type='file'][name='{desc}']"),
+            lambda: page.locator(f"input[type='file'][id='{desc}']"),
+            lambda: page.locator("input[type='file']"),
+        ):
             try:
                 loc = make()
                 if loc.count() > 0:
                     return loc.first
+            except Exception:
+                continue
+        return None
+
+    def _preview(self, task: Task, intent) -> AgentResult:
+        """SAFE. Screenshots the filled form and reports every field value,
+        so you can see exactly what would be submitted BEFORE submitting.
+
+        This exists because of a lesson learned the hard way elsewhere in
+        this project: an agent reporting "Submitted" is not evidence that
+        the right thing was sent. A submitted job application is irreversible
+        and attached to your name. Look at it first.
+        """
+        guard = self._require_session(task)
+        if guard:
+            return guard
+
+        try:
+            page = self.session.page
+            os.makedirs(browser_config.PREVIEW_DIR, exist_ok=True)
+            import time
+            path = os.path.join(browser_config.PREVIEW_DIR, f"form_{int(time.time())}.png")
+            page.screenshot(path=path, full_page=True)
+
+            # Mirrors what a browser ACTUALLY submits, not merely what each
+            # element's .value happens to hold.
+            #
+            # Real bug this fixes, caught by running the preview against
+            # httpbin's form: reading el.value on radios and checkboxes
+            # reports every option's value whether or not it's checked, so
+            # the preview claimed "size: small / medium / large" would be
+            # submitted when nothing was selected at all. A preview that
+            # over-reports is worse than no preview -- it is exactly the
+            # false confidence this feature exists to prevent.
+            fields = page.evaluate(
+                """() => Array.from(
+                    document.querySelectorAll('input, textarea, select')
+                ).filter(el => {
+                    // A browser submits nothing for these.
+                    if (el.disabled || !(el.name || el.id)) return false;
+                    if (el.type === 'submit' || el.type === 'button'
+                        || el.type === 'reset' || el.type === 'image') return false;
+                    if (el.type === 'radio' || el.type === 'checkbox') return el.checked;
+                    return true;
+                }).map(el => {
+                    let value;
+                    if (el.type === 'password') value = '********';
+                    else if (el.type === 'file') value = el.files?.[0]?.name || '(no file)';
+                    else if (el.tagName.toLowerCase() === 'select') {
+                        value = Array.from(el.selectedOptions).map(o => o.value).join(', ');
+                    } else value = el.value || '';
+                    return {
+                        name: el.name || el.id,
+                        type: el.type || el.tagName.toLowerCase(),
+                        value: value
+                    };
+                }).filter(f => f.value !== '')"""
+            )
+
+            if fields:
+                lines = "\n".join(f"  {f['name']}: {f['value']}" for f in fields)
+                summary = f"This is what would be submitted:\n{lines}"
+            else:
+                summary = "No filled fields found on this page."
+
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=True,
+                output=f"{summary}\n\nFull-page screenshot: {path}",
+                data={"screenshot": path, "fields": fields},
+            )
+        except Exception as e:
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output=f"Couldn't preview the form: {e}",
+                error="preview_failed",
+            )
+
+    def _find_clickable(self, description: str):
+        """Find a genuinely INTERACTIVE element, not merely text that reads
+        like one.
+
+        Real bug this fixes, found in live use: the old version fell back to
+        page.get_by_text(), which matches any text node at all. On httpbin's
+        JSON results page, 'click large' matched the word "large" inside the
+        response body and cheerfully reported "Clicked 'large'." Nothing was
+        clicked. That is a false success -- the same failure this project has
+        now hit three times in different disguises.
+
+        Interactive roles are tried first; a bare text match is only accepted
+        if the element it lands on is itself clickable (or sits inside a
+        label, which is how radio buttons and checkboxes are usually
+        labelled). Whatever is found must also be visible and enabled --
+        'found an element' is not 'found an actionable one', which the
+        disabled-submit-button bug taught the hard way.
+        """
+        page = self.session.page
+        desc = description.strip()
+        escaped = desc.replace("'", "\\'")
+
+        candidates = [
+            lambda: page.get_by_role("button", name=desc),
+            lambda: page.get_by_role("link", name=desc),
+            lambda: page.get_by_role("checkbox", name=desc),
+            lambda: page.get_by_role("radio", name=desc),
+            lambda: page.get_by_label(desc, exact=False),
+            lambda: page.locator(f"button:has-text('{escaped}')"),
+            lambda: page.locator(f"[aria-label='{escaped}']"),
+            lambda: page.locator(f"input[value='{escaped}']"),
+            # Text, but ONLY where it is (or is inside) something clickable.
+            lambda: page.locator(
+                f"a:has-text('{escaped}'), button:has-text('{escaped}'), "
+                f"label:has-text('{escaped}'), [role='button']:has-text('{escaped}')"
+            ),
+        ]
+        for make in candidates:
+            try:
+                loc = make()
+                if loc.count() == 0:
+                    continue
+                first = loc.first
+                if first.is_visible() and first.is_enabled():
+                    return first
             except Exception:
                 continue
         return None
@@ -258,6 +449,38 @@ class InteractiveBrowserAgent(BaseAgent):
                 output=f"Couldn't read the page: {e}",
                 error="read_failed",
             )
+
+    def preflight(self, task: Task) -> AgentResult | None:
+        """Read-only. Refuse to submit a page that has no form on it, before
+        the confirmation gate rather than after.
+
+        Found in live use: after submitting, the browser lands on the result
+        page (httpbin's JSON output). Typing 'submit' there would prompt
+        'This looks destructive. Proceed?' and, on approval, press Enter into
+        a page with nothing to submit -- then report success. A false success
+        for an action that could not possibly have happened.
+
+        Performs no side effects: it only inspects the DOM.
+        """
+        intent = classify(task.instruction)
+        if intent.operation != Operation.SUBMIT:
+            return None
+        if not self.session.is_open():
+            return None  # _submit's own guard reports this more precisely
+        try:
+            has_form = self.session.page.locator("form").count() > 0
+            has_inputs = self.session.page.locator(
+                "input:not([type='hidden']), textarea, select"
+            ).count() > 0
+        except Exception:
+            return None  # can't tell -- let the real handler try
+        if not has_form and not has_inputs:
+            return AgentResult(
+                task_id=task.task_id, agent=self.name, success=False,
+                output="There's no form on this page to submit.",
+                error="no_form_to_submit",
+            )
+        return None
 
     def _submit(self, task: Task, intent) -> AgentResult:
         """DESTRUCTIVE -- the orchestrator's confirmation gate has already

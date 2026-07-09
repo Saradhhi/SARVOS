@@ -17,3 +17,14 @@ PAGE_LOAD_TIMEOUT_MS = int(os.environ.get("SARVOS_PAGE_LOAD_TIMEOUT_MS", "15000"
 MAX_TEXT_LENGTH = int(os.environ.get("SARVOS_MAX_PAGE_TEXT_LENGTH", "3000"))
 
 HEADLESS = os.environ.get("SARVOS_BROWSER_HEADLESS", "1") == "1"
+
+# --- File upload -------------------------------------------------------
+# Uploads are restricted to this directory, resolved with the same
+# parent-membership check as file automation (agents/automation.py's
+# resolve_safe_path). Handing a file to a remote website is a data
+# exfiltration path: without this, "upload ../../.ssh/id_rsa" would work.
+# Put your resume here; nothing outside it can be uploaded.
+UPLOAD_DIR = os.environ.get("SARVOS_UPLOAD_DIR", "sarvos_workspace/uploads")
+
+# Completed-form previews (the dry-run screenshots) land here.
+PREVIEW_DIR = os.environ.get("SARVOS_PREVIEW_DIR", "sarvos_workspace/previews")

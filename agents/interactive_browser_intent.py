@@ -39,6 +39,8 @@ from core.schemas import RiskLevel
 class Operation(str, Enum):
     OPEN = "open"
     TYPE = "type"
+    UPLOAD = "upload"
+    PREVIEW = "preview"
     CLICK = "click"
     READ = "read"
     SUBMIT = "submit"
@@ -51,8 +53,8 @@ class InteractiveBrowserIntent:
     operation: Operation
     risk: RiskLevel
     url: str | None = None
-    text_arg: str | None = None      # text to type, or click-target description
-    field_arg: str | None = None     # which field to type into
+    text_arg: str | None = None      # text to type, click target, or filename
+    field_arg: str | None = None     # which field to type into / upload to
     raw_instruction: str = ""
 
 
@@ -82,6 +84,20 @@ _TYPE_RE = re.compile(
 # 'click "the login button"' / 'click the submit link'
 _CLICK_RE = re.compile(r"^click\s+(?:on\s+)?(?:the\s+)?['\"]?(.+?)['\"]?$", re.I)
 
+# 'upload resume.pdf to the resume field'  /  'attach resume.pdf'
+_UPLOAD_RE = re.compile(
+    r"^(?:upload|attach)\s+['\"]?([\w.\-/\\ ]+?)['\"]?"
+    r"(?:\s+(?:to|into)\s+(?:the\s+)?(.+?)(?:\s+field)?)?$",
+    re.I,
+)
+
+_PREVIEW_RE = re.compile(
+    r"^(?:preview(?:\s+the\s+form)?|dry.?run|"
+    r"show\s+me\s+(?:the\s+)?(?:filled|completed)\s+form|"
+    r"what\s+will\s+(?:be\s+)?submit(?:ted)?)\??$",
+    re.I,
+)
+
 _READ_RE = re.compile(
     r"^(?:read (?:the )?page|what'?s on (?:the |this )?page|read (?:it|this))$", re.I
 )
@@ -109,6 +125,21 @@ def classify(instruction: str) -> InteractiveBrowserIntent:
                 operation=Operation.OPEN, risk=RiskLevel.SAFE, url=url,
                 raw_instruction=instruction,
             )
+
+    m = _UPLOAD_RE.match(text)
+    if m and ("." in m.group(1)):  # must look like a filename
+        return InteractiveBrowserIntent(
+            operation=Operation.UPLOAD, risk=RiskLevel.SENSITIVE,
+            text_arg=m.group(1).strip(),
+            field_arg=(m.group(2) or "").strip() or None,
+            raw_instruction=instruction,
+        )
+
+    if _PREVIEW_RE.match(text):
+        return InteractiveBrowserIntent(
+            operation=Operation.PREVIEW, risk=RiskLevel.SAFE,
+            raw_instruction=instruction,
+        )
 
     m = _TYPE_RE.match(text)
     if m:

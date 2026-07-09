@@ -240,6 +240,66 @@ security position than typing into your own visible browser, since you're
 trusting the automation with live credentials in the moment. Nothing is
 stored, but that in-the-moment trust is real; use it accordingly.
 
+### File upload and dry-run preview
+
+```
+upload resume.pdf to the resume field
+preview the form            (or: dry run / what will be submitted)
+submit                      → [y/n]
+```
+
+**Uploads are sandboxed.** Files must live inside `SARVOS_UPLOAD_DIR`
+(default `sarvos_workspace/uploads`), resolved with the same
+parent-membership check as file automation. Handing a local file to a
+remote website is a data-exfiltration path — without this,
+`upload ../../.ssh/id_rsa to the resume field` would work exactly as asked.
+Attaching a file sends nothing; only `submit` transmits.
+
+**`preview the form` is the point of the whole thing.** It is `SAFE`, never
+navigates, and shows you every filled field plus a full-page screenshot of
+the completed form before you submit. Passwords are masked (`********`),
+consistent with the rule that typed values are never echoed back.
+
+This exists because of a lesson this project learned the hard way: an agent
+reporting *"Submitted"* is not evidence that the right thing was sent. The
+local LLM twice produced convincing prose about file changes that never
+happened. A form-filling agent has the same failure mode, except a
+submitted job application is irreversible and attached to your name. Look
+at the preview first.
+
+**And then the preview itself lied, on its first real outing.** Run against
+httpbin's pizza form, it reported `size: small / medium / large` and four
+toppings as though they would be submitted — none were selected. Reading
+`el.value` on a radio or checkbox returns that option's value whether or not
+it's checked. A preview that over-reports is *worse* than no preview: it is
+precisely the false confidence the feature exists to prevent. Fixed to
+mirror what a browser genuinely sends (unchecked controls contribute
+nothing; disabled and unnamed controls are excluded; `<select>` reports the
+chosen option). The regression test does the only comparison that really
+means anything: it checks the preview's promise against the query string the
+server actually receives.
+
+**On automating job applications specifically** — this makes it *possible*,
+not *advisable*. Real portals (Workday, Greenhouse, Lever) are JavaScript
+apps with multi-step wizards, dynamic field names, and mandatory logins;
+generic field matching will not survive them, and SARVOS deliberately
+stores no credentials. The honest use here is a plain HTML form you can see
+previewed before it goes out.
+
+**No false successes.** Two bugs of the same shape, both found in live use
+on httpbin's results page after a submit:
+
+- `click large` matched the word *"large"* inside the JSON response body —
+  `get_by_text()` matches any text node — and reported *"Clicked 'large'."*
+  Nothing was clicked. `_find_clickable` now only considers genuinely
+  interactive elements (buttons, links, labels, radios, checkboxes, things
+  with a button role), and whatever it finds must be visible and enabled.
+  *Found an element* is not *found an actionable one* — the same lesson the
+  disabled submit button taught.
+- `submit` on a page with no form would prompt for confirmation and then
+  report success. It now refuses in `preflight()`, before the gate, so you
+  are never asked to approve submitting nothing.
+
 **Field/element matching** is best-effort by common stable attributes
 (placeholder, name, id, label, aria-label, visible text). It's not a full
 accessibility-tree resolver — if a match is ambiguous or missing, the
@@ -681,7 +741,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-375 tests, all passing: episodic memory, semantic recall, confirmation
+390 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
