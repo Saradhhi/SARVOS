@@ -56,17 +56,52 @@ def test_destructive_utterance_asks_for_spoken_confirmation(assistant):
     assert assistant._pending_task is not None
 
 
-def test_confirmation_approved_by_voice(assistant):
+def test_confirmation_approved_by_voice(assistant, monkeypatch):
+    """Asserts on the confirmation MACHINERY, not on LLM prose.
+
+    The original version checked that the response text didn't contain
+    "won't". That made the test's outcome depend on whether Ollama happened
+    to be running and what it chose to say -- it passed in a sandbox with no
+    LLM (stub fallback) and failed on a real machine, where llama3.2
+    answered "delete everything" with an improvised warning about points of
+    no return that happened to contain the word "won't". The approval had
+    worked correctly; only the assertion was wrong.
+    """
+    captured = {}
+    real_resume = assistant.orchestrator.resume_with_confirmation
+
+    def spy(task, approved, request_id):
+        captured["approved"] = approved
+        return real_resume(task, approved, request_id)
+
+    monkeypatch.setattr(assistant.orchestrator, "resume_with_confirmation", spy)
+
     assistant.handle_utterance("delete everything")
-    response = assistant.handle_utterance("yes, go ahead")
+    assert assistant._pending_task is not None
+
+    assistant.handle_utterance("yes, go ahead")
     assert assistant._pending_task is None
-    assert "won't" not in response.lower()  # not rejected
+    assert captured["approved"] is True
 
 
-def test_confirmation_rejected_by_voice(assistant):
+def test_confirmation_rejected_by_voice(assistant, monkeypatch):
+    """Unlike the approval path, the rejection message ("Okay, I won't do
+    that.") is hardcoded in core/orchestrator.py, not LLM-generated -- so
+    checking it is legitimate. The machinery is asserted too, so this stays
+    correct if the wording ever changes."""
+    captured = {}
+    real_resume = assistant.orchestrator.resume_with_confirmation
+
+    def spy(task, approved, request_id):
+        captured["approved"] = approved
+        return real_resume(task, approved, request_id)
+
+    monkeypatch.setattr(assistant.orchestrator, "resume_with_confirmation", spy)
+
     assistant.handle_utterance("delete everything")
     response = assistant.handle_utterance("no, cancel that")
     assert assistant._pending_task is None
+    assert captured["approved"] is False
     assert "won't do that" in response.lower()
 
 

@@ -56,19 +56,13 @@ class InteractiveBrowserIntent:
     raw_instruction: str = ""
 
 
-_HAS_ANY_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
-_ALLOWED_SCHEME_RE = re.compile(r"^https?://", re.I)
-
-
-def _normalize_url(raw: str) -> str | None:
-    raw = raw.strip().strip('"\'').rstrip(".,!?")
-    if not raw:
-        return None
-    if not _HAS_ANY_SCHEME_RE.match(raw):
-        raw = f"https://{raw}"
-    if not _ALLOWED_SCHEME_RE.match(raw):
-        return None
-    return raw
+# Reuses the read-only browser's URL normalizer rather than duplicating it.
+# That one carries real, hard-won behavior: it blocks javascript:/file:/data:
+# schemes, and it refuses text that isn't shaped like a host at all (found
+# from real use -- "show me how to reverse a list in python" was being turned
+# into "https://how to reverse a list in python" and navigated to). A second
+# copy here would inevitably drift out of sync with those fixes.
+from agents.browser_intent import _normalize_url
 
 
 # "open a browser session at X" / "start browsing X" / "browse to X"

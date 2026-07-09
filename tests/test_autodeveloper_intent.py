@@ -54,3 +54,48 @@ def test_critical_negative_case_develop_as_ordinary_word():
 def test_looks_like_autodeveloper_request():
     assert looks_like_autodeveloper_request("run the tests")
     assert not looks_like_autodeveloper_request("remember that I like tea")
+
+
+# --- Auto-heal operations -------------------------------------------------
+
+def test_propose_fix_is_safe():
+    """PROPOSE_FIX writes nothing -- it only reads, calls the LLM, and
+    shows a diff. It must be SAFE so it isn't gated (nothing to gate)."""
+    intent = classify("propose a fix")
+    assert intent.operation == Operation.PROPOSE_FIX
+    assert intent.risk == RiskLevel.SAFE
+
+
+def test_propose_patch_variant():
+    assert classify("suggest a patch").operation == Operation.PROPOSE_FIX
+    assert classify("what would fix the tests").operation == Operation.PROPOSE_FIX
+
+
+def test_apply_fix_is_destructive():
+    """APPLY_FIX writes to disk -- must be DESTRUCTIVE so the orchestrator
+    gates it BEFORE anything is written."""
+    intent = classify("apply the fix")
+    assert intent.operation == Operation.APPLY_FIX
+    assert intent.risk == RiskLevel.DESTRUCTIVE
+
+
+def test_write_patch_variant_is_destructive():
+    intent = classify("write the patch")
+    assert intent.operation == Operation.APPLY_FIX
+    assert intent.risk == RiskLevel.DESTRUCTIVE
+
+
+def test_propose_fix_not_swallowed_by_run_tests():
+    """Ordering matters: 'propose a fix' must not be caught by any looser
+    pattern. It's a distinct, SAFE, read-only operation."""
+    intent = classify("propose a fix for the failing tests")
+    assert intent.operation == Operation.PROPOSE_FIX
+    assert intent.risk == RiskLevel.SAFE
+
+
+def test_ordinary_sentences_do_not_trigger_auto_heal():
+    """Same lesson as the original 'develop' substring bug: ordinary
+    sentences must not trigger a real LLM call or a disk write."""
+    assert classify("I need to fix my sleep schedule").operation == Operation.UNKNOWN
+    assert classify("let's apply for that grant").operation == Operation.UNKNOWN
+    assert classify("can you write the report").operation == Operation.UNKNOWN

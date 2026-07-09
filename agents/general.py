@@ -22,6 +22,18 @@ SYSTEM_PROMPT = (
     "to help', 'Certainly!', or 'As an AI'; just answer directly, using "
     "contractions, like a knowledgeable friend would rather than a "
     "customer service script."
+    "\n\nCRITICAL, non-negotiable: you have NO access to the user's files, "
+    "filesystem, terminal, or any system state. You cannot read files, run "
+    "commands, or apply changes -- other agents do that, not you. If asked "
+    "about the contents of a file, whether a change was applied, or what a "
+    "command printed, say plainly that you can't see it, and name the real "
+    "command they should run. NEVER invent file contents. NEVER show a diff "
+    "or a 'before/after' code block describing the user's actual files. "
+    "NEVER say a change has been applied. This has really happened in this "
+    "project: a user was told their file 'has been updated', complete with a "
+    "fabricated code block -- nothing had been written at all. Confident "
+    "prose about changes that never happened is far worse than admitting "
+    "you cannot see anything."
 )
 
 SPOKEN_SYSTEM_PROMPT = (
@@ -43,9 +55,77 @@ SPOKEN_SYSTEM_PROMPT = (
     "not a document. Weave options into a sentence instead of listing them.\n"
     "- It's fine to have a bit of personality and warmth. You don't need "
     "to sound neutral or corporate."
+    "\n- CRITICAL: you have NO access to the user's files, filesystem, or "
+    "terminal. You can't read files, run commands, or apply changes. If "
+    "asked what's in a file or whether a change was applied, just say you "
+    "can't see it. Never invent file contents and never claim a change was "
+    "made -- confidently describing changes that never happened is far "
+    "worse than saying you don't know."
 )
 
 HISTORY_TURNS = 6  # how much recent conversation to include as context
+
+# Lines that mark a block as a *diff* about real files, rather than an
+# ordinary code example. A general chat agent with no filesystem access
+# can never legitimately produce one of these.
+_DIFF_MARKERS = ("--- a/", "+++ b/", "@@ ")
+
+_STRIPPED_NOTICE = (
+    "[SARVOS removed a diff the assistant tried to show here. It has no "
+    "access to your files and cannot read them, so any diff it produces is "
+    "reconstructed from conversation, not from disk -- and would look "
+    "convincing while being wrong. To see the real file, run "
+    "`type <file>` (Windows) or `cat <file>` at your shell. To see a real, "
+    "verified diff of a proposed change, use: propose a fix for <file>]"
+)
+
+
+def strip_fabricated_diffs(text: str) -> str:
+    """Remove diff blocks from general-agent output, in code.
+
+    A system prompt is a request, not a constraint. Confirmed directly: told
+    categorically to never show a before/after block describing the user's
+    real files, llama3.2 said "You can't see the contents of calc.py" and
+    then displayed a diff of that exact file anyway -- reconstructed from
+    the conversation, with the indentation wrong. It was plausible and it
+    was false.
+
+    So this is enforced where it cannot be talked out of: any fenced block
+    or run of lines carrying diff markers is replaced with an explicit
+    notice. Ordinary code examples are left alone -- the agent may well be
+    asked a legitimate coding question; it just may never claim to show the
+    contents of the user's actual files.
+    """
+    if not any(marker in text for marker in _DIFF_MARKERS):
+        return text
+
+    out, buf, in_fence, fence_has_diff = [], [], False, False
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            if not in_fence:
+                in_fence, fence_has_diff, buf = True, False, [line]
+            else:
+                buf.append(line)
+                out.append(_STRIPPED_NOTICE + "\n" if fence_has_diff else "".join(buf))
+                in_fence, fence_has_diff, buf = False, False, []
+            continue
+
+        if in_fence:
+            buf.append(line)
+            if any(stripped.startswith(m) for m in _DIFF_MARKERS):
+                fence_has_diff = True
+        elif any(stripped.startswith(m) for m in _DIFF_MARKERS):
+            # A bare, unfenced diff line -- drop it, noting once.
+            if not out or not out[-1].startswith(_STRIPPED_NOTICE):
+                out.append(_STRIPPED_NOTICE + "\n")
+        else:
+            out.append(line)
+
+    if in_fence:  # unterminated fence
+        out.append(_STRIPPED_NOTICE + "\n" if fence_has_diff else "".join(buf))
+
+    return "".join(out).strip()
 
 
 class GeneralAgent(BaseAgent):
@@ -56,7 +136,7 @@ class GeneralAgent(BaseAgent):
         system_prompt = SPOKEN_SYSTEM_PROMPT if task.context.get("spoken") else SYSTEM_PROMPT
         try:
             client = get_llm_client()
-            response = client.generate(prompt, system=system_prompt)
+            response = strip_fabricated_diffs(client.generate(prompt, system=system_prompt))
         except LLMUnavailable as e:
             response = (
                 f"[general-agent: local LLM unavailable] {e}\n\n"

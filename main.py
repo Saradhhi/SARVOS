@@ -27,6 +27,24 @@ def build_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
     return create_orchestrator(db_path)
 
 
+STRAY_CONFIRMATION_REPLY = (
+    "Nothing is waiting for confirmation right now, so there's nothing to "
+    "say yes or no to. If you meant to apply a proposed fix, the command "
+    "is: apply the fix"
+)
+
+
+def is_stray_confirmation(text: str) -> bool:
+    """True if the input is a bare yes/no answer with nothing pending.
+
+    Such input must NEVER reach the chat LLM. Found from real use: after
+    'propose a fix' (a SAFE operation that asks nothing), a stray 'y' fell
+    through to the general agent, which improvised confident prose claiming
+    it had applied the patch. Nothing had been written. An affirmative with
+    nothing to affirm is a user mistake, not a question to answer."""
+    return text.strip().lower() in {"y", "yes", "n", "no"}
+
+
 def main() -> None:
     orchestrator = build_orchestrator()
     print("SARVOS Phase 1a — type 'exit' to quit, 'log' to see the audit trail.\n")
@@ -42,6 +60,12 @@ def main() -> None:
             continue
         if text.lower() in ("exit", "quit"):
             break
+
+        # A bare yes/no with nothing pending must NOT reach the chat LLM.
+        if is_stray_confirmation(text):
+            print(f"sarvos> {STRAY_CONFIRMATION_REPLY}")
+            continue
+
         if text.lower() == "log":
             for entry in orchestrator.memory.store.recent_audit_log(10):
                 print(f"  [{entry['timestamp']}] {entry['action']} "

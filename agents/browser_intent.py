@@ -39,9 +39,16 @@ class BrowserIntent:
 _SCREENSHOT_RE = re.compile(
     r"^(?:take\s+a\s+)?screenshot\s+of\s+(.+)$", re.I
 )
+# "show me" is deliberately NOT a bare trigger here: it's how people phrase
+# ordinary questions ("show me how to reverse a list in python"), which
+# really did get routed to the browser and turned into a bogus URL. It only
+# counts when followed by an explicit web noun. The other verbs (open, go
+# to, visit, browse to) are unambiguous enough to stand alone -- and
+# _normalize_url now rejects anything that isn't shaped like a host anyway.
 _OPEN_RE = re.compile(
-    r"^(?:open|go\s+to|visit|browse\s+to|show\s+me)\s+(?:the\s+)?"
-    r"(?:website\s+|page\s+|site\s+)?(.+)$",
+    r"^(?:(?:open|go\s+to|visit|browse\s+to)\s+(?:the\s+)?"
+    r"(?:website\s+|page\s+|site\s+)?"
+    r"|show\s+me\s+(?:the\s+)?(?:website\s+|page\s+|site\s+))(.+)$",
     re.I,
 )
 
@@ -62,14 +69,38 @@ _HAS_ANY_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
 _ALLOWED_SCHEME_RE = re.compile(r"^https?://", re.I)
 
 
+# A bare host must actually look like one before we prepend https:// to it.
+# Found from real use: "show me how to reverse a list in python" matched the
+# open-URL phrasing, and _normalize_url happily turned the whole sentence
+# into "https://how to reverse a list in python", which the browser agent
+# then tried to navigate to (ERR_NAME_NOT_RESOLVED). Hostnames cannot
+# contain whitespace, and a real bare host has a dot in it (example.com) --
+# except localhost, which is worth allowing explicitly.
+_BARE_HOST_RE = re.compile(
+    r"^(?:localhost(?::\d+)?|[\w\-]+(?:\.[\w\-]+)+)(?::\d+)?(?:[/?#].*)?$",
+    re.I,
+)
+
+
 def _normalize_url(raw: str) -> str | None:
     raw = raw.strip().strip('"\'').rstrip(".,!?")
     if not raw:
         return None
+
+    # Checked BEFORE scheme detection: "localhost:8000" and "example.com:443"
+    # contain a colon, so _HAS_ANY_SCHEME_RE would read "localhost" as a URI
+    # scheme, skip the https:// prefix, and then get refused. Bare hosts
+    # (with or without a port) are recognised here first.
+    if _BARE_HOST_RE.match(raw):
+        return f"https://{raw}"
+
     if not _HAS_ANY_SCHEME_RE.match(raw):
-        # No scheme given at all (e.g. "open example.com") -- assume
-        # https, the common case, rather than refusing outright.
-        raw = f"https://{raw}"
+        # No scheme and it doesn't look like a host either -- this is an
+        # ordinary sentence that happened to match the open-URL phrasing.
+        # Turning it into a URL would be nonsense (really happened: "show
+        # me how to reverse a list in python" became a navigation attempt).
+        return None
+
     if not _ALLOWED_SCHEME_RE.match(raw):
         return None  # non-http(s) scheme -- refused, see module docstring
     return raw

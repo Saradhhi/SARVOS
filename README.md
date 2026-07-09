@@ -416,10 +416,108 @@ rough edges:
   already used by `agents/automation.py` — no user-supplied paths are
   accepted anywhere in this agent at all; every operation works against
   a fixed, admin-configured workspace root instead.
-- The automatic fake-patch-writing loop was **not** carried over. A real
-  auto-heal feature (wired to Ollama, showing you the actual proposed
-  diff before writing) would be a legitimate future addition, built and
-  tested on its own — not something to keep as a stub, gated or not.
+- The automatic fake-patch-writing loop was **not** carried over. It has
+  since been rebuilt properly — see below.
+
+### Auto-heal: propose a fix, review the diff, then apply
+
+```
+run the tests                    # see it fail
+propose a fix                    # recommends a file, writes nothing
+propose a fix for calc.py        # real LLM patch + real unified diff
+apply the fix                    # DESTRUCTIVE -- gated, then written
+```
+
+The original integration's "self-healing" was a `simulate_llm_patch` stub
+that returned a hardcoded fake test, wrote it to disk automatically, and
+did so before any confirmation. All three of those properties are
+deliberately inverted here:
+
+1. **The LLM call is real** — the actual failing test output and the
+   actual file contents go to Ollama (`llm/client.py`), and it degrades
+   gracefully if Ollama isn't running.
+2. **`propose a fix` writes nothing.** It is `SAFE`, holds the proposed
+   patch in memory only (never on disk), and shows you a real unified
+   diff generated with `difflib`.
+3. **`apply the fix` is `DESTRUCTIVE`** — gated by the orchestrator's real
+   confirmation check *before* anything is written, and it can only apply
+   a patch you have already seen. There is no automatic heal loop.
+
+**A real, fundamental limitation — found by running pytest for real
+rather than assuming**: default pytest output often contains **no
+reference to the buggy source file at all**. For `assert add(2, 2) == 4`
+failing, the output names `test_calc.py` but never `calc.py`. So which
+source file is wrong genuinely cannot be determined from test output in
+general.
+
+An early version tried to infer it, and its own test caught the
+consequence: it selected the *test* file (the only path in the output)
+and would have overwritten the test with the fix meant for the source —
+**precisely** how the original stub clobbered a test file. Rather than
+paper over that with better regexes, the agent now **recommends** a
+target and stops; you confirm it by naming the file explicitly. Test
+files are refused as patch targets outright, even on direct request,
+since making a failing test pass by rewriting the test is almost never
+the fix. Additional guards: paths are resolved through the same tested
+`resolve_safe_path()`, oversized files are refused rather than silently
+truncated (a model patching content it never fully saw is a genuinely
+dangerous failure mode), markdown code fences are stripped from the
+model's response, and a patch is discarded if the file changed between
+proposal and approval — the diff you approved would no longer describe
+reality.
+
+### Two guards added after the LLM fabricated changes that never happened
+
+Live testing of auto-heal surfaced something worth documenting, because it
+is exactly the failure the propose/diff/apply design exists to prevent —
+and it happened twice in one session:
+
+1. After `propose a fix` (a `SAFE` operation that asks nothing), the user
+   typed `y` out of habit. With no pending confirmation, that fell through
+   to the general chat agent, which improvised confident prose: *"Looks
+   good! ... Applying the changes..."* followed by a diff-shaped block.
+   **Nothing had been written.** The model was roleplaying.
+2. Moments later, a shell command (`type calc.py`) typed at the SARVOS
+   prompt reached the same agent, which fabricated a complete "Before /
+   After" listing of the file and stated it *"has been updated"* — with
+   invented explanatory comments. The file was untouched; the model has no
+   filesystem access and simply pattern-matched the conversation.
+
+Both are now guarded:
+
+- **`main.py`** intercepts a bare `y`/`yes`/`n`/`no` when nothing is
+  pending and replies plainly, never invoking the LLM. A real message that
+  merely contains those words (*"no idea what that means"*) still passes
+  through — covered by an explicit negative-case test.
+- **The general agent's system prompt** (both text and voice) now states
+  categorically that it has no access to files, filesystem, or terminal;
+  must never invent file contents; must never show a before/after block
+  describing the user's real files; and must never claim a change was
+  applied. Asserted directly in `tests/test_stray_confirmation.py`.
+
+**Then the prompt guard itself failed, which is the most useful result of
+all.** Asked *"what's in calc.py"*, the model correctly said *"You can't
+see the contents of calc.py"* — and then displayed a diff of that exact
+file anyway, in direct violation of the instruction it had just followed.
+The diff was reconstructed from conversation; it even had the indentation
+wrong. Plausible, and false.
+
+The conclusion is not "write a firmer prompt." It's that **a system prompt
+is a request, not a constraint** — the model can be pulled off it by the
+conversational gravity of being helpful. So the rule is now enforced in
+code, where it can't be argued with: `strip_fabricated_diffs()` removes
+any diff-shaped block from general-agent output and replaces it with an
+explicit notice saying why. Ordinary code examples are untouched — the
+agent may answer coding questions freely; it just may never present the
+contents of your real files. The regression test uses the model's verbatim
+real output.
+
+The underlying lesson generalizes past this one bug: **an LLM narrating an
+action is not evidence the action occurred.** The only thing that made the
+difference here was checking the real file at the shell — and the fact
+that the actual write path is gated, so nothing *could* have been written
+without an explicit approval the user never gave. Prompts shape behavior;
+only code constrains it.
 
 ## System info agent (real CPU/RAM/disk/battery/network stats)
 
@@ -516,7 +614,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-296 tests, all passing: episodic memory, semantic recall, confirmation
+329 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
