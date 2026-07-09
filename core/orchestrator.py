@@ -120,6 +120,18 @@ class Orchestrator:
                 detail=task.instruction[:200],
             )
 
+            # READ-ONLY pre-flight, before the gate. Lets an agent decline a
+            # task it already knows will fail, so we never ask someone to
+            # authorize destroying something that doesn't exist. It cannot
+            # perform side effects -- see BaseAgent.preflight. Skipped on
+            # resume, where the check already passed on the first pass.
+            if not task.context.get("confirmed"):
+                refusal = agent.preflight(task)
+                if refusal is not None:
+                    results.append(refusal)
+                    task.status = TaskStatus.FAILED
+                    continue
+
             # Confirmation gating lives HERE, not inside individual agents.
             # An agent forgetting to check task.risk must never be a way to
             # bypass confirmation — this is the single choke point the
@@ -135,13 +147,7 @@ class Orchestrator:
                 raise PendingConfirmation(task, prompt)
 
             task.status = TaskStatus.IN_PROGRESS
-            if 'AUTODEVELOPER_BYPASS:' in getattr(task, 'instruction', ''):
-                from core.schemas import AgentResult
-                msg = task.instruction.replace('AUTODEVELOPER_BYPASS: ', '')
-                print(f'\n[SARVOS] {msg}\n')
-                result = AgentResult(task_id=task.task_id, agent=task.agent, success=True, output=msg, new_tasks=[])
-            else:
-                result = agent.handle(task)
+            result = agent.handle(task)
             results.append(result)
 
             if result.needs_confirmation:

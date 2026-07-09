@@ -97,6 +97,23 @@ class WindowManagerAgent(BaseAgent):
         super().__init__(memory)
         self.backend = backend or WindowBackend()
 
+    def preflight(self, task: Task) -> AgentResult | None:
+        """Read-only. Resolve the target window before the confirmation gate,
+        so 'close the notepad window' with no Notepad open fails immediately
+        instead of asking the person to authorize closing nothing.
+
+        Performs no side effects -- it only reads the window list."""
+        intent = classify(task.instruction)
+        if intent.operation in (Operation.UNKNOWN, Operation.LIST, Operation.ACTIVE):
+            return None
+        try:
+            _win, err = self._resolve_target(intent)
+        except WindowUnavailable as e:
+            return self._fail(task, str(e), error="window_unavailable")
+        if err:
+            return self._fail(task, err, error="window_not_resolved")
+        return None
+
     def handle(self, task: Task) -> AgentResult:
         intent = classify(task.instruction)
         if intent.operation == Operation.UNKNOWN:

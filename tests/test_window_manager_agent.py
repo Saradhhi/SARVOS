@@ -251,3 +251,58 @@ def test_minimize_is_not_gated():
     results = orchestrator.handle_user_message("minimize notepad", request_id="r1")
     assert results[-1].success
     assert win.calls == ["minimize"]
+
+
+# ---- preflight: don't ask to confirm destroying something nonexistent ---
+
+def test_close_nonexistent_window_never_prompts(tmp_path):
+    """Real annoyance found in live testing: 'close the notepad window' with
+    no Notepad open prompted 'This looks destructive. Proceed? [y/n]', waited
+    for a 'y', and only then said 'No open window matching notepad'. The
+    person was asked to authorize destroying something that didn't exist.
+
+    The read-only preflight now resolves the target before the gate."""
+    orchestrator = create_orchestrator(str(tmp_path / "pf.db"))
+    orchestrator.agents[AgentName.WINDOW_MANAGER].backend = FakeBackend([FakeWindow("Chrome")])
+
+    results = orchestrator.handle_user_message("close the notepad window", request_id="r1")
+    assert not results[-1].success
+    assert results[-1].error == "window_not_resolved"
+
+
+def test_preflight_does_not_weaken_the_gate(tmp_path):
+    """The preflight may only REFUSE, never act. A window that DOES exist
+    must still be gated, and must not be closed before approval."""
+    win = FakeWindow("Untitled - Notepad")
+    orchestrator = create_orchestrator(str(tmp_path / "pf2.db"))
+    orchestrator.agents[AgentName.WINDOW_MANAGER].backend = FakeBackend([win])
+
+    try:
+        orchestrator.handle_user_message("close the notepad window", request_id="r1")
+        pytest.fail("must still gate a real window")
+    except PendingConfirmation as e:
+        pending = e
+    assert win.calls == []
+
+    orchestrator.resume_with_confirmation(pending.task, approved=True, request_id="r1")
+    assert win.calls == ["close"]
+
+
+def test_ambiguous_close_never_prompts_either(tmp_path):
+    orchestrator = create_orchestrator(str(tmp_path / "pf3.db"))
+    a, b = FakeWindow("doc1 - Word"), FakeWindow("doc2 - Word")
+    orchestrator.agents[AgentName.WINDOW_MANAGER].backend = FakeBackend([a, b])
+
+    results = orchestrator.handle_user_message("close the word window", request_id="r1")
+    assert not results[-1].success
+    assert "matches 2 windows" in results[-1].output
+    assert a.calls == [] and b.calls == []
+
+
+def test_preflight_default_is_a_noop_for_other_agents():
+    """BaseAgent.preflight defaults to None so existing agents are unaffected."""
+    from agents.general import GeneralAgent
+    import tempfile as tf
+    memory = MemoryEngine(store=Store(Path(tf.mkdtemp()) / "g.db"))
+    agent = GeneralAgent(memory)
+    assert agent.preflight(_task("anything at all")) is None

@@ -284,6 +284,19 @@ raised, and closes only after approval).
 two Word documents, the agent lists them and stops. Silently minimizing the
 wrong window is an annoyance; silently *closing* the wrong one loses work.
 
+**A read-only pre-flight check, added after live testing.** Asked to
+`close the notepad window` with no Notepad open, SARVOS used to prompt
+*"This looks destructive. Proceed? [y/n]"*, wait for a `y`, and only then
+report *"No open window matching 'notepad'"* — asking the person to
+authorize destroying something that didn't exist. `BaseAgent.preflight()`
+now runs before the confirmation gate and may **only refuse** a task, never
+act on it. That distinction is the whole point: running agent code before
+confirmation is precisely the flaw this project rejected in the original
+AutoDeveloper integration, so the pre-flight is strictly read-only and the
+orchestrator's gate remains the single choke point for anything that
+actually changes the world (asserted by
+`test_preflight_does_not_weaken_the_gate`).
+
 **Routing**: checked before Computer Control, deliberately. That agent owns
 `close the application notepad` (terminating a process); this one owns
 `close the notepad window` (closing one window). Both remain `DESTRUCTIVE`,
@@ -668,7 +681,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-371 tests, all passing: episodic memory, semantic recall, confirmation
+375 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
