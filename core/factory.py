@@ -20,6 +20,7 @@ from agents.memory_agent import MemoryAgent
 from agents.general import GeneralAgent
 from agents.automation import AutomationAgent
 from agents.browser import BrowserAgent
+from agents.interactive_browser import InteractiveBrowserAgent
 from agents.research import ResearchAgent
 from agents.system_info import SystemInfoAgent
 from agents.terminal import TerminalAgent
@@ -36,6 +37,7 @@ def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
         AgentName.GENERAL: GeneralAgent(memory),
         AgentName.AUTOMATION: AutomationAgent(memory),
         AgentName.BROWSER: BrowserAgent(memory),
+        AgentName.INTERACTIVE_BROWSER: InteractiveBrowserAgent(memory),
         AgentName.RESEARCH: ResearchAgent(memory),
         AgentName.SYSTEM_INFO: SystemInfoAgent(memory),
         AgentName.TERMINAL: TerminalAgent(memory),

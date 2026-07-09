@@ -197,6 +197,68 @@ for the test suite) with real Playwright navigation, a real screenshot
 file written and verified non-empty, and confirmed live against actual
 external sites (github.com) during manual testing.
 
+## Interactive browsing (stateful: forms, logins, clicking)
+
+```
+open a browser session at example.com
+type "myusername" into the username field
+type "mypassword" into the password field
+click the accept cookies button
+read the page
+submit          (or: log in / sign in)
+close the browser session
+```
+
+Distinct from the read-only browser agent above — this one holds a
+**persistent** Playwright session open across turns, because interactive
+browsing is inherently multi-step and stateful: you open a page, *then*
+type into a field on it, *then* submit, all needing the same live browser
+to still be open. The session lives as instance state on the agent (which
+the orchestrator keeps alive for its whole lifetime) and survives between
+turns until you explicitly `close the browser session`.
+
+**Confirmation gating**: `type`, `click`, `read`, and `open` are `SAFE`
+(nothing permanent changes). `submit` / `log in` / `sign in` are
+`DESTRUCTIVE` — gated by the same central confirmation check as
+everything else, because that's the moment real, often irreversible side
+effects happen (authenticating, sending data). Verified end-to-end
+against a real local HTML form: `submit` raises `PendingConfirmation` and
+the form is confirmed to *not have navigated* at that point; only after
+explicit approval does the real form actually submit
+(`tests/test_interactive_browser_agent.py::test_submit_is_gated_and_executes_real_form_after_approval`).
+This matches an explicit decision to gate only the moment of consequence,
+not every harmless click.
+
+**No stored credentials, ever** — by design there is no operation to
+save, load, or auto-fill passwords. Logging in means *you* type your
+credentials in the moment via a normal `type` command; nothing is
+persisted, and typed values are never echoed back in responses (they
+might be passwords). **Honest security caveat, stated plainly**: typing
+credentials via this agent means typing them into a *headless, invisible*
+automated browser session against a real site — a genuinely worse
+security position than typing into your own visible browser, since you're
+trusting the automation with live credentials in the moment. Nothing is
+stored, but that in-the-moment trust is real; use it accordingly.
+
+**Field/element matching** is best-effort by common stable attributes
+(placeholder, name, id, label, aria-label, visible text). It's not a full
+accessibility-tree resolver — if a match is ambiguous or missing, the
+agent says so clearly (`read the page` to see what's there) rather than
+guessing and clicking the wrong thing.
+
+**A real bug found from live use on DuckDuckGo, then fixed**: modern
+search sites often have a submit `<button>` that's deliberately `disabled`
+and hidden — the search actually fires from a JavaScript handler when you
+press Enter, and the button is decorative. The first version found that
+button and timed out trying to click the unclickable thing, never
+reaching its Enter-key fallback ("a submit button exists" isn't "a
+*clickable* submit button exists"). Fixed to require the button be
+genuinely visible and enabled before clicking, otherwise focus the text
+field and press Enter — which is how real search boxes submit. Covered by
+a regression test modeling exactly this (a disabled/hidden button plus a
+JS keydown handler), after confirming empirically that Chromium genuinely
+won't natively submit a form whose only submit control is disabled.
+
 ## Computer control agent (screenshot, clipboard, volume, power state)
 
 ```
@@ -454,7 +516,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-269 tests, all passing: episodic memory, semantic recall, confirmation
+296 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio

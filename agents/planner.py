@@ -18,6 +18,7 @@ from core.schemas import AgentName, AgentResult, RiskLevel, Task
 from agents.base import BaseAgent
 from agents.automation_intent import classify as classify_automation, Operation as AutomationOp
 from agents.browser_intent import classify as classify_browser, Operation as BrowserOp
+from agents.interactive_browser_intent import classify as classify_interactive_browser, Operation as InteractiveBrowserOp
 from agents.research_intent import classify as classify_research, Operation as ResearchOp
 from agents.system_info_intent import classify as classify_system_info, Operation as SystemInfoOp
 from agents.terminal_intent import classify as classify_terminal, Operation as TerminalOp
@@ -69,6 +70,25 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=automation_intent.risk,
+                )
+            ]
+
+        # Checked BEFORE the read-only browser classifier: the interactive
+        # "open a browser session at X" phrasing would otherwise be caught
+        # by the read-only agent's looser "open X" pattern first. The
+        # read-only agent stays the default for plain "open X" / "screenshot
+        # X"; interactive routing requires the more explicit "session"
+        # phrasing (or type/click/submit/read-page, which the read-only
+        # agent doesn't recognize at all).
+        interactive_browser_intent = classify_interactive_browser(task.instruction)
+        if interactive_browser_intent.operation != InteractiveBrowserOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.INTERACTIVE_BROWSER,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=interactive_browser_intent.risk,
                 )
             ]
 

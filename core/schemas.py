@@ -42,6 +42,7 @@ class AgentName(str, Enum):
     MEMORY = "memory"
     AUTOMATION = "automation"
     BROWSER = "browser"
+    INTERACTIVE_BROWSER = "interactive_browser"
     RESEARCH = "research"
     SYSTEM_INFO = "system_info"
     TERMINAL = "terminal"
