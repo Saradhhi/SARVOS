@@ -23,6 +23,7 @@ from agents.research_intent import classify as classify_research, Operation as R
 from agents.system_info_intent import classify as classify_system_info, Operation as SystemInfoOp
 from agents.terminal_intent import classify as classify_terminal, Operation as TerminalOp
 from agents.computer_control_intent import classify as classify_computer_control, Operation as ComputerControlOp
+from agents.window_manager_intent import classify as classify_window, Operation as WindowOp
 from agents.autodeveloper_intent import classify as classify_autodeveloper, Operation as AutoDeveloperOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
@@ -137,6 +138,22 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=terminal_intent.risk,
+                )
+            ]
+
+        # Checked BEFORE computer_control: that agent owns "close the
+        # application X" (terminating a process), while this one owns
+        # "close the X window" (closing one window of it). The window
+        # phrasing is more specific and must win.
+        window_intent = classify_window(task.instruction)
+        if window_intent.operation != WindowOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.WINDOW_MANAGER,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=window_intent.risk,
                 )
             ]
 

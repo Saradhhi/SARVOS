@@ -259,6 +259,60 @@ a regression test modeling exactly this (a disabled/hidden button plus a
 JS keydown handler), after confirming empirically that Chromium genuinely
 won't natively submit a form whose only submit control is disabled.
 
+## Window management (list, focus, move, resize, close)
+
+```
+list windows
+what's the active window
+focus notepad          /  switch to chrome
+minimize               (bare verb = the active window)
+minimize notepad       /  maximize notepad  /  restore notepad
+move notepad to 100, 200
+resize notepad to 800x600
+close the notepad window
+```
+
+**Risk tiers**: `list`/`active` are `SAFE`. `focus`/`minimize`/`maximize`/
+`restore`/`move`/`resize` are `SENSITIVE` — real visible effects, but
+trivially reversible by the person at the keyboard. `close` is
+`DESTRUCTIVE`: it can lose unsaved work, so it goes through the same
+central confirmation gate as everything else, verified end-to-end (the
+window is confirmed untouched at the moment `PendingConfirmation` is
+raised, and closes only after approval).
+
+**Ambiguity is refused, not guessed.** If `close the word window` matches
+two Word documents, the agent lists them and stops. Silently minimizing the
+wrong window is an annoyance; silently *closing* the wrong one loses work.
+
+**Routing**: checked before Computer Control, deliberately. That agent owns
+`close the application notepad` (terminating a process); this one owns
+`close the notepad window` (closing one window). Both remain `DESTRUCTIVE`,
+and a test asserts neither steals the other's phrasing.
+
+**The verb-anchoring problem, caught by its own tests**: `focus`,
+`minimize`, `restore`, `move`, and `close` are all extremely common in
+ordinary speech. The first draft happily matched *"focus on your work"*,
+*"minimize the risk"*, and *"restore my faith in humanity"*. Each verb is
+now anchored — it needs an explicit window noun, a single bare title token,
+or nothing at all (meaning the active window). Same lesson as the `develop`
+substring bug and the `show me` misrouting, and it keeps recurring because
+natural language reuses these words constantly.
+
+**The honest limitation, worse here than anywhere else in this project**:
+`pygetwindow` does not merely fail on Linux — it raises `NotImplementedError`
+on *import*. Not one real window operation could be executed while writing
+this. Every Windows call therefore lives behind `WindowBackend`, a seam
+containing no logic, and all 20 agent tests run against a substitute. What
+is genuinely verified: routing, risk tiers, title matching, ambiguity
+refusal, error handling, and the confirmation gate. What is **not** verified
+anywhere: that `pygetwindow`'s own methods do what their names say on real
+Windows. Given that this project's Windows testing has already caught a
+pycaw API change, a battery data-shape bug, and a near-miss real shutdown —
+all invisible to the sandbox — that gap deserves stating plainly rather
+than glossing over. The lazy import is itself load-bearing: without it, this
+module would crash the entire agent registry at startup on any non-Windows
+machine (asserted by a test).
+
 ## Computer control agent (screenshot, clipboard, volume, power state)
 
 ```
@@ -614,7 +668,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-329 tests, all passing: episodic memory, semantic recall, confirmation
+371 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio
