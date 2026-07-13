@@ -11,3 +11,7 @@ test.db
 *.env
 .env.*
 sarvos_workspace/
+workspace/
+backup_candidates/
+*.docx
+*.bak
