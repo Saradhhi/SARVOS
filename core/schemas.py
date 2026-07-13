@@ -49,6 +49,8 @@ class AgentName(str, Enum):
     AUTODEVELOPER = "autodeveloper"
     COMPUTER_CONTROL = "computer_control"
     WINDOW_MANAGER = "window_manager"
+    DOCUMENT = "document"
+    JOB = "job"
     GENERAL = "general"
 
 

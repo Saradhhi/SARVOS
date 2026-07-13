@@ -268,6 +268,51 @@ def history(limit: int = 50):
     }
 
 
+@app.get("/api/stats")
+def stats():
+    """Live system stats for the dashboard.
+
+    Reads psutil directly, every request. Nothing here is cached or
+    simulated -- a dashboard showing invented numbers would be the
+    fabricated-diff problem with better typography.
+    """
+    import psutil
+
+    cpu = psutil.cpu_percent(interval=0.1)
+    ram = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+    battery = None
+    try:
+        b = psutil.sensors_battery()
+        if b is not None:
+            battery = {"percent": round(b.percent), "plugged": b.power_plugged}
+    except Exception:
+        pass
+
+    return {
+        "cpu_percent": round(cpu),
+        "ram_percent": round(ram.percent),
+        "ram_used": ram.used,
+        "ram_total": ram.total,
+        "disk_percent": round(disk.percent),
+        "disk_used": disk.used,
+        "disk_total": disk.total,
+        "battery": battery,
+    }
+
+
+@app.get("/api/agents")
+def agents():
+    """The agents that actually exist, read from the live registry rather
+    than a hardcoded list -- so this can never claim a capability the
+    system doesn't have."""
+    return {
+        "agents": sorted(
+            a.value for a in _orchestrator.agents if a.value != "planner"
+        )
+    }
+
+
 @app.get("/api/log")
 def audit_log(limit: int = 30):
     return {"entries": _memory.store.recent_audit_log(limit=limit)}

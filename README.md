@@ -286,6 +286,101 @@ generic field matching will not survive them, and SARVOS deliberately
 stores no credentials. The honest use here is a plain HTML form you can see
 previewed before it goes out.
 
+### Inspecting and autofilling real job forms
+
+```
+inspect the form            (what fields exist, labels, required, options)
+autofill from alice         (fill the confident, flag the rest)
+```
+
+Real ATS portals (Workday, Greenhouse, iCIMS) are what break naive
+form-filling: a field's `name` is `input-42` while its visible label lives
+in a `<label for>`, an `aria-label`, a wrapping `<label>`, or just a
+placeholder. **`inspect the form`** resolves the human label the way a
+browser does and reports every field with its real name, label, type,
+required flag, and (for dropdowns) its options. It turns a form from a black
+box into a checklist.
+
+**`autofill from <candidate>`** then maps that candidate's profile onto the
+form and *types only what it's confident about* — free-text fields whose
+label or name clearly matches a profile key. Everything else is **flagged,
+never guessed**:
+
+- Required fields it can't fill (a `<select>` it won't choose for you, or a
+  field with no matching profile data) are called out loudly: *"!! REQUIRED
+  field(s) NOT filled — you must handle these before submitting."*
+- Free-text fields with no profile match are listed as left-for-you, not
+  silently skipped.
+- It **never submits.** Submitting stays behind the browser agent's gated
+  `submit`, after you've reviewed and run `preview the form`.
+
+This is deliberate: a wrong autofill — your email typed into the "referral"
+box, or a required field silently skipped — is worse than no autofill. The
+design makes the tool's own uncertainty visible instead of hiding it behind
+a confident-looking result.
+
+**`_autofill` had been referenced in the handler dispatch but never
+defined** — the same dead-reference bug as the automation agent's
+`SHELL_COMMAND`, and it crashed the whole browser agent on construction the
+moment anything built the dispatch table. It's now implemented and covered
+by tests against a purpose-built messy form, so it can't silently rot again.
+
+### Tabs, downloads, PDF, bookmarks, and change detection
+
+```
+open a new tab at example.com     /  new tab
+list tabs                          /  switch to tab 2  /  close tab 2
+download "Get the report"          /  download report.pdf
+save the page as pdf
+bookmark this page as docs         /  list bookmarks  /  open bookmark docs
+check this page for changes
+```
+
+**Downloads and PDFs are sandboxed** to `SARVOS_DOWNLOAD_DIR` and
+`SARVOS_PDF_DIR`. Note *who chooses the download filename*: the remote
+server does. A server suggesting `../../.ssh/authorized_keys` must not be
+able to write there, so every path component is stripped before the name
+touches `resolve_safe_path`. Tested directly.
+
+**`close tab` is `SENSITIVE`, not `DESTRUCTIVE`** — unlike the window
+agent's `close`. These are SARVOS's own headless tabs, containing only what
+SARVOS put there; at worst you lose an unsubmitted form you can refill.
+Closing a real application window can discard work you spent hours on.
+Closing the last tab ends the session, and says so, rather than leaving a
+zombie session that claims to be open.
+
+**Bookmarks live in SARVOS's SQLite store, not in Chrome or Firefox.** The
+agent says this every time it saves one. SARVOS drives a separate headless
+browser; a bookmark here will never appear in the browser you actually use,
+and pretending otherwise would be a small lie told often.
+
+**`check this page for changes` is deliberately not called "monitoring".**
+Monitoring means something runs while you're away — that needs a scheduler
+and a daemon (Tier 8), which do not exist. This compares the page's text
+against a stored hash and tells you whether it changed since you last
+looked, and by how many characters. It is also honest about its own limit:
+it knows *that* the page changed, not *what* changed, because only a hash
+was kept, not the text.
+
+**Two things from Tier 3 were deliberately not built:**
+
+- **`Search Google`.** The research agent went through three rewrites
+  because `html.duckduckgo.com` is an unofficial endpoint that
+  bot-blocks and violates its terms. Google is stricter. Scraping it would
+  pass tests and fail silently in real use. The research agent uses
+  DuckDuckGo's *official* Instant Answer API instead.
+- **`Monitor websites for changes`** as a background job — see above. The
+  snapshot comparison is the honest subset that works without a scheduler.
+
+**Two loose patterns were caught by their own routing tests.** `download
+<anything>` matched *"download the latest version of python"* — a question,
+not a command — so link text must now be quoted or be a bare filename.
+`bookmark <anything>` turned *"bookmark this for later"* into a bookmark
+named `this for later`, so an explicit `as <name>` is now required. This is
+the same failure as the `develop` substring bug, the `show me` misrouting,
+and the window verbs: **natural language reuses these words constantly, and
+a verb prefix is never enough.**
+
 **No false successes.** Two bugs of the same shape, both found in live use
 on httpbin's results page after a submit:
 
@@ -318,6 +413,123 @@ field and press Enter — which is how real search boxes submit. Covered by
 a regression test modeling exactly this (a disabled/hidden button plus a
 JS keydown handler), after confirming empirically that Chromium genuinely
 won't natively submit a form whose only submit control is disabled.
+
+## Document intelligence (PDF, Word, Excel, text)
+
+```
+list documents
+read resume.pdf
+search resume.pdf for FastAPI
+find "salary" in contract.docx
+summarize contract.docx
+```
+
+Reads real PDFs (`pypdf`), Word documents including table cells
+(`python-docx`), spreadsheets across all sheets (`openpyxl`), and plain
+text. Every operation is `SAFE` — reading changes nothing. The risk here is
+**disclosure, not destruction**, so the protection that matters is the
+sandbox, not a confirmation prompt. Asking *"are you sure you want to read
+the file you just named?"* is theatre; refusing to read outside
+`SARVOS_DOCUMENTS_DIR` is not.
+
+**Two sandboxes, deliberately separate.** `documents/` is *files SARVOS may
+read*; `uploads/` (see interactive browsing) is *files SARVOS may send to a
+website*. Merging them would mean dropping a file in one place silently
+grants both permissions — you should be able to let SARVOS read a
+confidential contract without also letting it upload one.
+
+**Truncation is never silent.** `read` announces exactly how much of a
+document it showed. `summarize` is stricter: a model handed the first 12,000
+characters of a 90,000-character contract will summarize those 12,000 with
+total confidence and no indication anything is missing. So the truncation is
+stated to the model *and* printed as a warning to you, and the output is
+explicitly labelled *"generated by the local model, not the document
+itself"*. You should never be unsure whether you're reading the contract or
+a paraphrase of part of it. This is the same failure this project has met
+four times now, in four disguises — a component reporting confidently on
+something it never fully saw.
+
+**Use `search` for facts, `summarize` for gist.** In testing, a clause at
+character 16,000 of a contract was found instantly by `search` and lay far
+outside anything `summarize` had read. Search reads the whole document.
+
+**Scanned PDFs** contain images of text, not text. They're reported as
+having no extractable content rather than silently returning nothing — OCR
+isn't built.
+
+**This is the first agent in the project fully verifiable in the sandbox.**
+The tests build real PDFs, Word files, and spreadsheets with known contents
+and check the extraction against them. No fake backend, no monkeypatched
+library — the real `pypdf`/`python-docx`/`openpyxl` code runs against real
+files.
+
+## Job assistant
+
+```
+set my email to you@example.com     /  show my profile
+save this posting as senior-eng      (from the open browser page)
+match senior-eng against my resume sfdc.docx
+fill this form from my profile
+log an application to Acme - Senior Engineer   /  list applications
+```
+
+An honest, **multi-candidate** job-application assistant, built after asking
+whether SARVOS could "apply to a link for me." It deliberately does **not**
+do that.
+
+**Any number of candidates, any field.** Nothing is hardcoded to a person or
+a technology. Each candidate gets their own folder under
+`SARVOS_CANDIDATES_DIR`, holding their profile, resume, saved postings, and
+application log together:
+
+```
+add candidate alice          /  use candidate bob  /  list candidates
+```
+
+You set an active candidate once and every command applies to them until you
+switch -- daily use is switch-and-go, not naming a candidate on every line,
+and it scales to hundreds because one folder is one person's whole job
+search: backupable, handoffable, and deletable on its own. Two candidates
+never see each other's profile, postings, or applications (asserted by the
+isolation tests). Real
+portals (Workday, Greenhouse, Lever, iCIMS) are JavaScript wizards with
+dynamic field names and mandatory logins, and SARVOS stores no credentials
+by design. An agent that claimed to just apply would pass a demo and fail
+silently on applications attached to your name. So this does the tedious,
+safe, reversible parts and leaves every irreversible act to you:
+
+- **Profile** — the active candidate's reusable application data, in their
+  own folder. Unknown fields are rejected rather than stored
+  under a junk key, and it refuses to store passwords outright: *"Log into
+  sites yourself, in a browser you can see."*
+- **Match** — saves a real posting (from the open browser page, not the
+  model's imagination) and compares it to your resume. The output is
+  labelled *"the local model's read of both documents, not a verdict on
+  your fit"*, the prompt forbids inventing qualifications or fabricating a
+  fit score, and truncation of either document is warned about. It reuses
+  the document agent's sandboxed extraction, so it can only read resumes
+  from the documents directory.
+- **Fill** — maps your profile onto a form and hands back commands to
+  *review*, then run through the browser agent's own type / preview /
+  submit flow. It never types or submits itself. The irreversible act stays
+  where the gate is.
+- **Track** — a local record of what you applied to and when.
+- **Optimize / rewrite / cover letter** — deep ATS analysis of the active
+  candidate's real resume against a saved posting (`optimize my resume for
+  <posting>`), then, on request, a tailored resume (`rewrite my resume for
+  <posting>`) or a cover letter (`write a cover letter for <posting>`)
+  written to the candidate's folder. Optimize is `SAFE` (analysis you read);
+  rewrite and cover-letter `SENSITIVE` because they write a file. Every one
+  is bound by the same hard rule in its system prompt: **use only facts,
+  employers, dates, and skills actually in the resume — never invent
+  experience.** A resume with a fabricated fact is one you could be fired
+  for; the generated files are drafts to verify and edit, and say so.
+
+**The one LLM operation (match) is verified for what it sends and how it
+labels the result**, not for the model's words — the test asserts the
+prompt genuinely contained text from both the real posting and the real
+resume, and that the output is framed as a gap analysis rather than a
+verdict.
 
 ## Window management (list, focus, move, resize, close)
 
@@ -639,6 +851,33 @@ agent may answer coding questions freely; it just may never present the
 contents of your real files. The regression test uses the model's verbatim
 real output.
 
+**Then it claimed to have run a command.** Typing `python main.py` at the
+SARVOS prompt (a shell command, in the wrong place) reached the general
+agent, which answered *"I've run the command, but I still can't find any
+information about a file named resume.pdf"*. It ran nothing. There was no
+`resume.pdf`. Both halves were invented. The diff filter catches fabricated
+*diffs*; `flag_fabricated_actions()` now catches fabricated *actions*, which
+are the same falsehood in prose form — a first-person past-tense claim to
+have run, read, or applied something gets an explicit correction appended.
+Advice (*"you could run the tests"*) and future tense are untouched; the
+response is annotated rather than deleted, since silently removing text
+would trade one opacity for another.
+
+**Shell commands typed at the `you>` prompt were the door both fabrications
+came through.** `main.py` now intercepts them: `type calc.py`, `python
+main.py`, `pip install x`, `dir`. A chat model handed a shell command will
+always try to make conversational sense of it, and conversational sense means
+inventing a context.
+
+The subtlety is that a verb-prefix match is *not enough*, and its own test
+proved it: the first version stole `type "x" into the name field` (browser),
+`move notepad to 100, 200` (windows), and `git status of my repo`
+(automation) — all real SARVOS commands that merely begin with a shell verb.
+The guard now fires only for input **no specialist agent claims**, asked
+directly of the planner (`routes_to_a_specialist`) rather than by
+reimplementing the routing rules. `git status` turns out to be a real SARVOS
+command, not a stray one.
+
 The underlying lesson generalizes past this one bug: **an LLM narrating an
 action is not evidence the action occurred.** The only thing that made the
 difference here was checking the real file at the shell — and the fact
@@ -741,7 +980,7 @@ pip install pytest httpx
 python -m pytest tests/ -v
 ```
 
-390 tests, all passing: episodic memory, semantic recall, confirmation
+500 tests, all passing: episodic memory, semantic recall, confirmation
 gating, LLM graceful degradation, the web API's request/response contract,
 the desktop app's server-readiness logic, the voice assistant's
 conversation/confirmation logic, wake-word model loading, audio

@@ -10,6 +10,8 @@ were the first thing you'd ever said to SARVOS.
 
 from __future__ import annotations
 
+import re
+
 from core.schemas import AgentName, AgentResult, Task
 from agents.base import BaseAgent
 from llm.client import LLMUnavailable, get_llm_client
@@ -80,6 +82,48 @@ _STRIPPED_NOTICE = (
 )
 
 
+_ACTION_CLAIM_NOTICE = (
+    "\n\n[SARVOS note: the assistant claimed to have performed an action. It "
+    "cannot -- it has no shell, no filesystem, and no ability to run "
+    "anything. Any such claim is invented. Real work is done by the other "
+    "agents, and you can see it happen: 'run the tests', 'read <file>', "
+    "'propose a fix for <file>'.]"
+)
+
+# First-person, past-tense claims of having DONE something. Deliberately
+# narrow: "you could run the tests" and "try running it" are fine advice.
+# "I ran the tests" is a lie, because this agent cannot run anything.
+_ACTION_CLAIM_RE = re.compile(
+    r"\bI(?:'ve| have)?\s+(?:just\s+|already\s+)?"
+    r"(?:ran|run|executed|checked|opened|read|looked\s+at|inspected|"
+    r"searched|applied|wrote|written|created|deleted|modified|updated)\b"
+    r"|\bI(?:'m| am)\s+(?:now\s+)?(?:running|executing|applying|reading)\b",
+    re.I,
+)
+
+
+def flag_fabricated_actions(text: str) -> str:
+    """Append a correction when the general agent claims to have acted.
+
+    Found in live use: typing 'python main.py' at the SARVOS prompt reached
+    this agent, which answered "I've run the command, but I still can't find
+    any information about a file named resume.pdf". It ran nothing. There is
+    no resume.pdf. Both halves were invented.
+
+    The diff filter catches fabricated *diffs*; this catches fabricated
+    *actions*, which are the same falsehood in prose form. Enforced in code
+    for the same reason: the system prompt already forbade this, and the
+    model did it anyway. Prompts shape behavior; only code constrains it.
+
+    Kept deliberately narrow. The response is annotated, not suppressed --
+    the model may still have said something useful, and silently deleting
+    text would trade one opacity for another.
+    """
+    if _ACTION_CLAIM_RE.search(text):
+        return text.rstrip() + _ACTION_CLAIM_NOTICE
+    return text
+
+
 def strip_fabricated_diffs(text: str) -> str:
     """Remove diff blocks from general-agent output, in code.
 
@@ -136,7 +180,8 @@ class GeneralAgent(BaseAgent):
         system_prompt = SPOKEN_SYSTEM_PROMPT if task.context.get("spoken") else SYSTEM_PROMPT
         try:
             client = get_llm_client()
-            response = strip_fabricated_diffs(client.generate(prompt, system=system_prompt))
+            response = client.generate(prompt, system=system_prompt)
+            response = flag_fabricated_actions(strip_fabricated_diffs(response))
         except LLMUnavailable as e:
             response = (
                 f"[general-agent: local LLM unavailable] {e}\n\n"

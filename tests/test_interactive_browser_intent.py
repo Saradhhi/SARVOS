@@ -95,3 +95,91 @@ def test_unrelated_instruction_is_unknown():
 def test_looks_like_interactive_browser_request():
     assert looks_like_interactive_browser_request("read the page")
     assert not looks_like_interactive_browser_request("remember that I like tea")
+
+
+# ---- Tabs, downloads, PDF, bookmarks, snapshot compare ------------------
+
+def test_tab_operations():
+    assert classify("open a new tab").operation == Operation.NEW_TAB
+    assert classify("new tab").operation == Operation.NEW_TAB
+    assert classify("list tabs").operation == Operation.LIST_TABS
+    assert classify("what tabs are open").operation == Operation.LIST_TABS
+
+
+def test_new_tab_with_a_url():
+    i = classify("open a new tab at example.com")
+    assert i.operation == Operation.NEW_TAB
+    assert i.url == "https://example.com"
+
+
+def test_new_tab_with_nonsense_instead_of_a_url_is_unknown():
+    """Same lesson as 'show me how to reverse a list in python' -- text that
+    isn't shaped like a host must not become one."""
+    assert classify("open a new tab at some point later").operation == Operation.UNKNOWN
+
+
+def test_tab_numbers_are_one_based_for_humans_zero_based_inside():
+    assert classify("switch to tab 1").tab_index == 0
+    assert classify("switch to tab 3").tab_index == 2
+    assert classify("close tab 2").tab_index == 1
+
+
+def test_close_tab_is_sensitive_not_destructive():
+    """These are SARVOS's own headless tabs -- at worst an unsubmitted form.
+    Contrast the window agent's close, which can discard a person's unsaved
+    work in an application they were actually using."""
+    assert classify("close tab 1").risk == RiskLevel.SENSITIVE
+
+
+def test_close_tab_does_not_shadow_closing_the_session():
+    assert classify("close the browser session").operation == Operation.CLOSE
+    assert classify("close tab 1").operation == Operation.CLOSE_TAB
+
+
+def test_download_requires_quoted_link_text_or_a_filename():
+    """Caught by its own routing test: the loose version stole 'download the
+    latest version of python', which is a question, not a command."""
+    assert classify('download "Get the report"').text_arg == "Get the report"
+    assert classify("download report.pdf").text_arg == "report.pdf"
+    for text in ("download the latest version of python", "download node",
+                 "download whatever you want"):
+        assert classify(text).operation == Operation.UNKNOWN, text
+
+
+def test_bookmark_requires_an_explicit_name():
+    """The loose version turned 'bookmark this for later' into a bookmark
+    named 'this for later'."""
+    assert classify("bookmark this page as hn").name_arg == "hn"
+    assert classify("bookmark as hn").name_arg == "hn"
+    for text in ("bookmark this for later", "bookmark that"):
+        assert classify(text).operation == Operation.UNKNOWN, text
+
+
+def test_download_and_pdf_are_sensitive():
+    """Both write a file to disk."""
+    assert classify("download report.pdf").risk == RiskLevel.SENSITIVE
+    assert classify("save the page as pdf").risk == RiskLevel.SENSITIVE
+    assert classify("print this page to pdf").operation == Operation.SAVE_PDF
+
+
+def test_bookmark_operations():
+    i = classify("bookmark this page as hackernews")
+    assert i.operation == Operation.BOOKMARK
+    assert i.name_arg == "hackernews"
+    assert classify("list bookmarks").operation == Operation.LIST_BOOKMARKS
+    assert classify("open bookmark hackernews").name_arg == "hackernews"
+
+
+def test_open_bookmark_does_not_look_like_a_url_open():
+    assert classify("open bookmark hn").operation == Operation.OPEN_BOOKMARK
+
+
+def test_check_changes_variants():
+    assert classify("check this page for changes").operation == Operation.CHECK_CHANGES
+    assert classify("has the page changed").operation == Operation.CHECK_CHANGES
+
+
+def test_everything_new_is_safe_except_writes_and_tab_close():
+    for text in ("list tabs", "switch to tab 1", "open a new tab",
+                 "list bookmarks", "check this page for changes"):
+        assert classify(text).risk == RiskLevel.SAFE, text

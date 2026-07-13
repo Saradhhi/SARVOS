@@ -19,6 +19,7 @@ SAFE but the AutomationAgent treats it as DESTRUCTIVE, or vice versa.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 from enum import Enum
 
@@ -33,6 +34,7 @@ class Operation(str, Enum):
     MOVE_FILE = "move_file"
     COPY_FILE = "copy_file"
     GIT_COMMAND = "git_command"
+    SHELL_COMMAND = "shell_command"
     UNKNOWN = "unknown"
 
 
@@ -45,6 +47,7 @@ class AutomationIntent:
     dest_path: str | None = None  # for move/copy
     content: str | None = None
     git_args: list[str] | None = None
+    shell_args: list[str] | None = None
     raw_instruction: str = ""
 
 
@@ -55,6 +58,19 @@ class AutomationIntent:
 GIT_SAFE_SUBCOMMANDS = {"status", "log", "diff", "branch", "show", "remote"}
 GIT_SENSITIVE_SUBCOMMANDS = {"add", "commit", "fetch", "stash"}
 GIT_DESTRUCTIVE_SUBCOMMANDS = {"push", "pull", "checkout", "reset", "merge", "rebase"}
+
+# Real, standalone, read-only executables -- deliberately NOT shell
+# built-ins (Windows' `dir`, `echo`, `cd`, `set` etc. aren't real .exe
+# files and need cmd.exe involved to run at all, which reopens the door
+# to shell interpretation we're specifically avoiding here). Every entry
+# below is a genuine program on disk, on both Windows and Linux/Mac, so
+# subprocess.run([...], shell=False) can find and execute it directly.
+# This is an allowlist, not a denylist -- anything not listed here is
+# DESTRUCTIVE (gated behind confirmation), not silently permitted.
+SAFE_SHELL_COMMANDS = {
+    "whoami", "hostname", "systeminfo", "tasklist", "ps", "ipconfig",
+    "ifconfig", "where", "which",
+}
 
 _READ_FILE_RE = re.compile(r"^(?:read|show|open|cat|display)\s+(?:the\s+)?file\s+(.+)$", re.I)
 _LIST_DIR_RE = re.compile(
@@ -71,6 +87,10 @@ _MOVE_FILE_RE = re.compile(
 )
 _COPY_FILE_RE = re.compile(r"^copy\s+(?:the\s+)?file\s+(\S+)\s+to\s+(\S+)$", re.I)
 _GIT_RE = re.compile(r"^git\s+(\S+)(?:\s+(.*))?$", re.I)
+_SHELL_COMMAND_RE = re.compile(
+    r"^(?:run|execute)\s+(?:the\s+)?(?:shell\s+command|terminal\s+command|command)?\s*:?\s*(.+)$",
+    re.I,
+)
 
 
 def classify(instruction: str) -> AutomationIntent:
@@ -150,6 +170,42 @@ def classify(instruction: str) -> AutomationIntent:
         return AutomationIntent(
             operation=Operation.WRITE_FILE, risk=RiskLevel.SENSITIVE,
             path=match.group(1).strip(), content=match.group(2).strip(),
+            raw_instruction=instruction,
+        )
+
+    match = _SHELL_COMMAND_RE.match(text)
+    if match:
+        command_text = match.group(1).strip()
+        if not command_text:
+            return AutomationIntent(
+                operation=Operation.UNKNOWN, risk=RiskLevel.SAFE, raw_instruction=instruction,
+            )
+
+        # "run git status" and "git status" must classify identically --
+        # delegate to the same git logic above rather than treating git
+        # through the coarser generic-shell-command allowlist, which would
+        # otherwise gate a genuinely safe git subcommand behind
+        # confirmation just because it arrived via "run ...".
+        if command_text.lower().startswith("git "):
+            return classify(command_text)
+
+        try:
+            tokens = shlex.split(command_text)
+        except ValueError:
+            # Unbalanced quotes or similar -- can't safely tokenize this,
+            # so refuse rather than guess at what was meant.
+            return AutomationIntent(
+                operation=Operation.UNKNOWN, risk=RiskLevel.SAFE, raw_instruction=instruction,
+            )
+        if not tokens:
+            return AutomationIntent(
+                operation=Operation.UNKNOWN, risk=RiskLevel.SAFE, raw_instruction=instruction,
+            )
+
+        base_command = tokens[0].lower()
+        risk = RiskLevel.SAFE if base_command in SAFE_SHELL_COMMANDS else RiskLevel.DESTRUCTIVE
+        return AutomationIntent(
+            operation=Operation.SHELL_COMMAND, risk=risk, shell_args=tokens,
             raw_instruction=instruction,
         )
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -44,6 +45,22 @@ CREATE TABLE IF NOT EXISTS workflows (
     steps TEXT NOT NULL,  -- JSON list of step instructions
     created_at TEXT NOT NULL,
     last_used_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+    name TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+-- Snapshots of page text, so "what changed since last time" is answered by
+-- comparing against something real rather than by asking a model to recall.
+CREATE TABLE IF NOT EXISTS page_snapshots (
+    url TEXT PRIMARY KEY,
+    text_hash TEXT NOT NULL,
+    char_count INTEGER NOT NULL,
+    captured_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -187,6 +204,53 @@ class Store:
         }
 
     # ---- Audit log ----------------------------------------------------------
+
+    # ---- bookmarks -------------------------------------------------------
+
+    def save_bookmark(self, name: str, url: str, title: str = "") -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO bookmarks (name, url, title, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (name, url, title, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def all_bookmarks(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name, url, title, created_at FROM bookmarks ORDER BY name"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_bookmark(self, name: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT name, url, title FROM bookmarks WHERE name = ?", (name,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_bookmark(self, name: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM bookmarks WHERE name = ?", (name,))
+        return cur.rowcount > 0
+
+    # ---- page snapshots --------------------------------------------------
+
+    def save_page_snapshot(self, url: str, text_hash: str, char_count: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO page_snapshots (url, text_hash, char_count, captured_at) "
+                "VALUES (?, ?, ?, ?)",
+                (url, text_hash, char_count, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def get_page_snapshot(self, url: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT url, text_hash, char_count, captured_at FROM page_snapshots WHERE url = ?",
+                (url,),
+            ).fetchone()
+        return dict(row) if row else None
 
     def log_action(
         self, action: str, task_id: str = "", agent: str = "", risk: str = "", detail: str = ""

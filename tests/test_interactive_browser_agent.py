@@ -491,3 +491,417 @@ def test_submit_still_gates_a_real_form(tmp_path, radio_server, upload_dir):
     orchestrator.resume_with_confirmation(pending.task, approved=True, request_id="r1")
     assert "submitted.html" in agent.session.page.url
     agent.session.close()
+
+
+# ---- Tabs, downloads, PDF, bookmarks, snapshot compare ------------------
+
+_TABS_HTML = """
+<html><head><title>Home</title></head><body>
+<h1>Home Page</h1>
+<a href="report.txt" download="report.txt">Get the report</a>
+<a href="other.html">Just a link</a>
+</body></html>
+"""
+_OTHER_HTML = "<html><head><title>Other</title></head><body><p>Other page</p></body></html>"
+
+
+@pytest.fixture
+def tabs_server(tmp_path):
+    import http.server, threading
+    d = tmp_path / "tabsite"
+    d.mkdir()
+    (d / "home.html").write_text(_TABS_HTML)
+    (d / "other.html").write_text(_OTHER_HTML)
+    (d / "report.txt").write_text("quarterly numbers, all fine")
+    h = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=str(d), **k)
+    srv = http.server.HTTPServer(("127.0.0.1", 0), h)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+@pytest.fixture
+def browser_dirs(tmp_path, monkeypatch):
+    monkeypatch.setattr("agents.browser_config.DOWNLOAD_DIR", str(tmp_path / "downloads"))
+    monkeypatch.setattr("agents.browser_config.PDF_DIR", str(tmp_path / "pages"))
+    yield tmp_path
+
+
+def test_new_tab_and_list_and_switch(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task(f"open a new tab at {tabs_server}/other.html"))
+    assert r.success
+    assert len(agent.session.pages) == 2
+    assert agent.session.page.title() == "Other"   # new tab is active
+
+    r = agent.handle(_task("list tabs"))
+    assert r.success
+    assert r.data["active"] == 2
+    assert [t["title"] for t in r.data["tabs"]] == ["Home", "Other"]
+
+    r = agent.handle(_task("switch to tab 1"))
+    assert r.success
+    assert agent.session.page.title() == "Home"
+    agent.session.close()
+
+
+def test_switch_to_a_tab_that_does_not_exist(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task("switch to tab 5"))
+    assert not r.success
+    assert r.error == "no_such_tab"
+    agent.session.close()
+
+
+def test_close_tab_leaves_the_others(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    agent.handle(_task(f"open a new tab at {tabs_server}/other.html"))
+    r = agent.handle(_task("close tab 2"))
+    assert r.success
+    assert len(agent.session.pages) == 1
+    assert agent.session.page.title() == "Home"
+    agent.session.close()
+
+
+def test_closing_the_last_tab_ends_the_session_and_says_so(agent, tabs_server):
+    """A zombie session with no tabs would be an invisible lie about state."""
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task("close tab 1"))
+    assert r.success
+    assert r.data["session_closed"] is True
+    assert not agent.session.is_open()
+
+
+def test_download_saves_a_real_file_into_the_sandbox(agent, tabs_server, browser_dirs):
+    from pathlib import Path as _P
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task('download "Get the report"'))
+    assert r.success, r.output
+    f = _P(r.data["file"])
+    assert f.is_file()
+    assert f.read_text() == "quarterly numbers, all fine"
+    # And it landed inside the sandbox, not anywhere else.
+    assert str(browser_dirs / "downloads") in str(f)
+    agent.session.close()
+
+
+def test_download_from_a_plain_link_fails_honestly(agent, tabs_server, browser_dirs):
+    """A link that merely navigates is not a download. Saying 'downloaded'
+    would be a false success."""
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task('download "Just a link"'))
+    assert not r.success
+    assert r.error == "download_failed"
+    agent.session.close()
+
+
+def test_a_hostile_suggested_filename_cannot_escape_the_sandbox(agent):
+    """The REMOTE SERVER chooses the download filename. A server suggesting
+    '../../.ssh/authorized_keys' must not be able to write there."""
+    safe = agent._safe_download_name("../../.ssh/authorized_keys")
+    assert "/" not in safe and "\\" not in safe and ".." not in safe
+    assert safe == "authorized_keys"
+    assert agent._safe_download_name("") == "download"
+    assert agent._safe_download_name("...") == "download"
+
+
+def test_save_page_as_pdf_writes_a_real_pdf(agent, tabs_server, browser_dirs):
+    from pathlib import Path as _P
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task("save the page as pdf"))
+    assert r.success, r.output
+    f = _P(r.data["file"])
+    assert f.is_file()
+    assert f.read_bytes().startswith(b"%PDF"), "must be a genuine PDF, not an empty file"
+    agent.session.close()
+
+
+def test_bookmarks_round_trip(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task("bookmark this page as home"))
+    assert r.success
+    assert "not in your real browser" in r.output
+
+    r = agent.handle(_task("list bookmarks"))
+    assert r.data["bookmarks"][0]["name"] == "home"
+
+    agent.handle(_task(f"open a new tab at {tabs_server}/other.html"))
+    r = agent.handle(_task("open bookmark home"))
+    assert r.success
+    assert agent.session.page.title() == "Home"
+    agent.session.close()
+
+
+def test_opening_a_missing_bookmark_fails_clearly(agent):
+    r = agent.handle(_task("open bookmark nonexistent"))
+    assert not r.success
+    assert r.error == "no_such_bookmark"
+
+
+def test_check_changes_first_time_says_there_is_nothing_to_compare(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    r = agent.handle(_task("check this page for changes"))
+    assert r.success
+    assert r.data["first_snapshot"] is True
+    assert "nothing to compare" in r.output
+    agent.session.close()
+
+
+def test_check_changes_detects_a_real_change(agent, tabs_server):
+    """Tests the 'changed' branch deterministically by seeding an old
+    snapshot directly, rather than rewriting a served file and reloading.
+    The earlier version did the latter and was flaky on Windows: the rewrite
+    shared a filesystem-timestamp tick with the original, SimpleHTTPRequest-
+    Handler returned 304 Not Modified, the browser served the CACHED old
+    page, and change detection correctly reported 'unchanged'. The code was
+    right; the test depended on cache-invalidation timing. Seeding the store
+    avoids HTTP entirely."""
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    url = agent.session.page.url
+
+    # Seed a snapshot whose hash cannot match the current page.
+    agent.memory.store.save_page_snapshot(url, "old-hash-that-wont-match", 1)
+
+    r = agent.handle(_task("check this page for changes"))
+    assert r.success
+    assert r.data["changed"] is True
+    assert "CHANGED" in r.output
+    # Honest about its own limits: it knows THAT it changed, not WHAT.
+    assert "not what changed" in r.output
+    agent.session.close()
+
+
+def test_check_changes_reports_unchanged(agent, tabs_server):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    agent.handle(_task("check this page for changes"))
+    agent.session.page.reload()
+    r = agent.handle(_task("check this page for changes"))
+    assert r.success
+    assert r.data["changed"] is False
+    assert "Unchanged" in r.output
+    agent.session.close()
+
+
+def test_tab_operations_need_a_session(agent):
+    for cmd in ("list tabs", "switch to tab 1", "close tab 1", "save the page as pdf"):
+        r = agent.handle(_task(cmd))
+        assert not r.success and r.error == "no_session", cmd
+
+
+# ---- Inspect and autofill on a realistically MESSY form -----------------
+#
+# Models the things that break naive form-filling on real ATS portals
+# (Workday/Greenhouse/iCIMS): fields named 'input-42' with the real label
+# elsewhere, aria-label instead of a <label>, a required marker via
+# aria-required, a <select> with options, and a field the profile can't map.
+
+_MESSY_FORM_HTML = """
+<html><head><title>Apply</title></head><body>
+<form method="post" action="/submitted.html">
+  <label for="fld-1">Full name</label>
+  <input id="fld-1" name="input-42" type="text" required />
+
+  <input name="input-43" type="email" aria-label="Email Address" aria-required="true" />
+
+  <label>Phone
+    <input name="input-44" type="tel" />
+  </label>
+
+  <label for="fld-4">Work Authorization</label>
+  <select id="fld-4" name="input-45" required>
+    <option value="">Select</option>
+    <option value="citizen">US Citizen</option>
+    <option value="visa">Requires Visa</option>
+  </select>
+
+  <label for="fld-5">Why do you want this role?</label>
+  <textarea id="fld-5" name="input-46"></textarea>
+
+  <input name="referral" type="text" placeholder="Who referred you?" />
+  <button type="submit">Apply</button>
+</form></body></html>
+"""
+
+
+@pytest.fixture
+def messy_server(tmp_path):
+    import http.server, threading
+    d = tmp_path / "messy"
+    d.mkdir()
+    (d / "apply.html").write_text(_MESSY_FORM_HTML)
+    (d / "submitted.html").write_text(_SUBMITTED_HTML)
+    h = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=str(d), **k)
+    srv = http.server.HTTPServer(("127.0.0.1", 0), h)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+def test_inspect_resolves_real_labels_behind_opaque_names(agent, messy_server):
+    """The whole point: on a real form the name is 'input-42' and the label
+    lives in a <label for>, aria-label, or wrapping <label>. Inspect must
+    surface the human label, not the opaque name."""
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("inspect the form"))
+    assert r.success
+    by_name = {f["name"]: f for f in r.data["fields"]}
+
+    assert by_name["input-42"]["label"] == "Full name"          # label[for]
+    assert by_name["input-43"]["label"] == "Email Address"      # aria-label
+    assert "Phone" in by_name["input-44"]["label"]              # wrapping label
+    assert by_name["input-45"]["label"] == "Work Authorization" # select label
+    assert by_name["referral"]["label"] == "Who referred you?"  # placeholder
+
+
+def test_inspect_reports_required_and_options(agent, messy_server):
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("inspect the form"))
+    by_name = {f["name"]: f for f in r.data["fields"]}
+
+    assert by_name["input-42"]["required"] is True             # required attr
+    assert by_name["input-43"]["required"] is True             # aria-required
+    assert by_name["input-44"]["required"] is False
+    assert by_name["input-45"]["options"] == ["citizen", "visa"]  # empty option dropped
+    assert r.data["required_count"] == 3
+
+
+def test_inspect_needs_a_session(agent):
+    r = agent.handle(_task("inspect the form"))
+    assert not r.success
+    assert r.error == "no_session"
+
+
+# ---- Autofill: fill the confident, flag the rest, submit nothing --------
+#
+# _autofill was referenced in the handler dispatch but NEVER DEFINED -- the
+# same dead-reference bug as the automation agent's SHELL_COMMAND. These
+# tests exist so that can't silently happen again.
+
+@pytest.fixture
+def candidate_env(tmp_path, monkeypatch):
+    monkeypatch.setattr("agents.job_config.CANDIDATES_DIR", str(tmp_path / "candidates"))
+    monkeypatch.setattr("agents.job_config.ACTIVE_CANDIDATE_FILE", str(tmp_path / "active.txt"))
+    from agents.job import JobAgent
+    from memory.engine import MemoryEngine
+    from memory.store import Store
+    job = JobAgent(MemoryEngine(store=Store(tmp_path / "j.db")))
+    # Build a candidate with a realistic profile.
+    d = tmp_path / "candidates" / "alice" / "postings"
+    d.mkdir(parents=True)
+    (tmp_path / "candidates" / "alice" / "profile.json").write_text(
+        '{"full_name": "Alice Chen", "email": "alice@example.com", '
+        '"phone": "555-0100", "current_title": "Backend Engineer"}'
+    )
+    (tmp_path / "active.txt").write_text("alice")
+    yield tmp_path
+
+
+def test_autofill_fills_confident_fields_and_flags_the_rest(agent, messy_server, candidate_env):
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("autofill from alice"))
+    assert r.success
+
+    filled = {f["profile_key"] for f in r.data["filled"]}
+    # Name, email, phone all map to free-text fields -> filled.
+    assert {"full_name", "email", "phone"} <= filled
+
+    # The required <select> (Work Authorization) can't be guessed -> flagged.
+    req_labels = {s["label"] for s in r.data["skipped_required"]}
+    assert "Work Authorization" in req_labels
+    assert any(s["reason"] == "needs a choice" for s in r.data["skipped_required"])
+
+    # The free-text 'referral' has no profile match -> listed as unmapped,
+    # not silently ignored.
+    unmapped_labels = {u["label"] for u in r.data["unmapped"]}
+    assert "Who referred you?" in unmapped_labels
+
+
+def test_autofill_actually_types_into_the_page(agent, messy_server, candidate_env):
+    """Fills must land in the DOM, not just be reported."""
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    agent.handle(_task("autofill from alice"))
+    page = agent.session.page
+    assert page.input_value("input[name='input-42']") == "Alice Chen"
+    assert page.input_value("input[name='input-43']") == "alice@example.com"
+    assert page.input_value("input[name='input-44']") == "555-0100"
+    # The unmapped and select fields stay empty -- nothing invented.
+    assert page.input_value("input[name='referral']") == ""
+
+
+def test_autofill_never_submits(agent, messy_server, candidate_env):
+    """The whole safety premise: autofill types, it does not submit."""
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("autofill from alice"))
+    assert "Nothing was submitted" in r.output
+    # Still on the form, not the success page.
+    assert agent.session.page.title() == "Apply"
+
+
+def test_autofill_uses_active_candidate_when_none_named(agent, messy_server, candidate_env):
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("autofill"))
+    assert r.success
+    assert r.data["candidate"] == "alice"
+
+
+def test_autofill_without_a_candidate_fails(agent, messy_server, tmp_path, monkeypatch):
+    monkeypatch.setattr("agents.job_config.CANDIDATES_DIR", str(tmp_path / "none"))
+    monkeypatch.setattr("agents.job_config.ACTIVE_CANDIDATE_FILE", str(tmp_path / "no_active.txt"))
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("autofill"))
+    assert not r.success
+    assert r.error == "no_candidate"
+
+
+def test_autofill_with_empty_profile_fails(agent, messy_server, tmp_path, monkeypatch):
+    monkeypatch.setattr("agents.job_config.CANDIDATES_DIR", str(tmp_path / "candidates"))
+    monkeypatch.setattr("agents.job_config.ACTIVE_CANDIDATE_FILE", str(tmp_path / "active.txt"))
+    (tmp_path / "candidates" / "bob" / "postings").mkdir(parents=True)
+    (tmp_path / "candidates" / "bob" / "profile.json").write_text("{}")
+    (tmp_path / "active.txt").write_text("bob")
+    agent.handle(_task(f"open a browser session at {messy_server}/apply.html"))
+    r = agent.handle(_task("autofill from bob"))
+    assert not r.success
+    assert r.error == "empty_profile"
+
+
+def test_autofill_needs_a_session(agent, candidate_env):
+    r = agent.handle(_task("autofill from alice"))
+    assert not r.success
+    assert r.error == "no_session"
+
+
+# ---- Page settle (wait for JS-rendered content) -------------------------
+
+def test_open_waits_for_the_dom_to_settle(agent, tabs_server, monkeypatch):
+    """Plain goto() returns before a single-page app renders, which is why
+    'read the page' came back empty on a JS-heavy job aggregator. _settle
+    must be called on open so content is present before we read it."""
+    seen = []
+    real_settle = agent._settle
+    monkeypatch.setattr(agent, "_settle",
+                        lambda page: (seen.append(True), real_settle(page)))
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    assert seen, "_settle was not called on open"
+    agent.session.close()
+
+
+def test_read_settles_before_reading(agent, tabs_server, monkeypatch):
+    agent.handle(_task(f"open a browser session at {tabs_server}/home.html"))
+    seen = []
+    real_settle = agent._settle
+    monkeypatch.setattr(agent, "_settle",
+                        lambda page: (seen.append(True), real_settle(page)))
+    agent.handle(_task("read the page"))
+    assert seen, "_settle was not called on read"
+    agent.session.close()
+
+
+def test_settle_tolerates_a_timeout_without_raising(agent):
+    """A page that never settles must not turn into an error -- we read what
+    rendered. Simulated with a fake page whose wait always times out."""
+    class _StubPage:
+        def wait_for_load_state(self, state, timeout=None):
+            raise Exception("Timeout exceeded")
+    # Should not raise.
+    agent._settle(_StubPage())

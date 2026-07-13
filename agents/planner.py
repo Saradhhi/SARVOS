@@ -24,6 +24,8 @@ from agents.system_info_intent import classify as classify_system_info, Operatio
 from agents.terminal_intent import classify as classify_terminal, Operation as TerminalOp
 from agents.computer_control_intent import classify as classify_computer_control, Operation as ComputerControlOp
 from agents.window_manager_intent import classify as classify_window, Operation as WindowOp
+from agents.document_intent import classify as classify_document, Operation as DocumentOp
+from agents.job_intent import classify as classify_job, Operation as JobOp
 from agents.autodeveloper_intent import classify as classify_autodeveloper, Operation as AutoDeveloperOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
@@ -102,6 +104,37 @@ class PlannerAgent(BaseAgent):
                     instruction=task.instruction,
                     context=task.context,
                     risk=browser_intent.risk,
+                )
+            ]
+
+        # Job assistant, checked early: its commands are specific ("set my
+        # email to ...", "match X against my resume") and must not be caught
+        # by the broader memory or document classifiers.
+        job_intent = classify_job(task.instruction)
+        if job_intent.operation != JobOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.JOB,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=job_intent.risk,
+                )
+            ]
+
+        # Checked BEFORE research and browser. The document classifier is
+        # strictly more specific -- it requires a real filename with an
+        # extension -- so it cannot steal a genuine web search. Without this
+        # ordering, "search resume.pdf for python" went to the web.
+        document_intent = classify_document(task.instruction)
+        if document_intent.operation != DocumentOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.DOCUMENT,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=document_intent.risk,
                 )
             ]
 
@@ -210,3 +243,22 @@ class PlannerAgent(BaseAgent):
                 risk=risk,
             )
         ]
+
+
+def routes_to_a_specialist(instruction: str, memory=None) -> bool:
+    """True if any specialist agent claims this instruction.
+
+    Single source of routing truth, so callers don't reimplement the list of
+    looks_like_*_request() checks and silently miss one when an agent is
+    added. Used by main.py to distinguish a stray shell command ("type
+    calc.py") from a real SARVOS command that merely shares its first word
+    ("type \"x\" into the name field").
+    """
+    from core.schemas import AgentName, Task
+
+    planner = PlannerAgent(memory) if memory is not None else PlannerAgent.__new__(PlannerAgent)
+    probe = Task(parent_request_id="probe", agent=AgentName.PLANNER, instruction=instruction)
+    for task in planner._decompose(probe):
+        if task.agent != AgentName.GENERAL:
+            return True
+    return False
