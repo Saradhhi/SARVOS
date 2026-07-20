@@ -51,6 +51,7 @@ class AgentName(str, Enum):
     WINDOW_MANAGER = "window_manager"
     DOCUMENT = "document"
     JOB = "job"
+    IMPORT = "import"
     GENERAL = "general"
 
 

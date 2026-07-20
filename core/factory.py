@@ -28,6 +28,7 @@ from agents.computer_control import ComputerControlAgent
 from agents.window_manager import WindowManagerAgent
 from agents.document import DocumentAgent
 from agents.job import JobAgent
+from agents.import_agent import ImportAgent
 from agents.autodeveloper import AutoDeveloperAgent
 
 
@@ -47,7 +48,8 @@ def create_orchestrator(db_path: str = "sarvos.db") -> Orchestrator:
         AgentName.COMPUTER_CONTROL: ComputerControlAgent(memory),
         AgentName.WINDOW_MANAGER: WindowManagerAgent(memory),
         AgentName.DOCUMENT: DocumentAgent(memory),
-        AgentName.JOB: JobAgent(memory, browser=interactive_browser),
+        AgentName.JOB: (job_agent := JobAgent(memory, browser=interactive_browser)),
+        AgentName.IMPORT: ImportAgent(memory, job=job_agent),
         AgentName.AUTODEVELOPER: AutoDeveloperAgent(memory),
     }
     return Orchestrator(memory, agents)

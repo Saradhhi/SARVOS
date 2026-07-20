@@ -26,6 +26,7 @@ from agents.computer_control_intent import classify as classify_computer_control
 from agents.window_manager_intent import classify as classify_window, Operation as WindowOp
 from agents.document_intent import classify as classify_document, Operation as DocumentOp
 from agents.job_intent import classify as classify_job, Operation as JobOp
+from agents.import_intent import classify as classify_import, Operation as ImportOp
 from agents.autodeveloper_intent import classify as classify_autodeveloper, Operation as AutoDeveloperOp
 
 DESTRUCTIVE_KEYWORDS = ("delete", "remove", "drop", "wipe", "format", "rm ")
@@ -110,6 +111,18 @@ class PlannerAgent(BaseAgent):
         # Job assistant, checked early: its commands are specific ("set my
         # email to ...", "match X against my resume") and must not be caught
         # by the broader memory or document classifiers.
+        import_intent = classify_import(task.instruction)
+        if import_intent.operation != ImportOp.UNKNOWN:
+            return [
+                Task(
+                    parent_request_id=task.parent_request_id,
+                    agent=AgentName.IMPORT,
+                    instruction=task.instruction,
+                    context=task.context,
+                    risk=import_intent.risk,
+                )
+            ]
+
         job_intent = classify_job(task.instruction)
         if job_intent.operation != JobOp.UNKNOWN:
             return [
